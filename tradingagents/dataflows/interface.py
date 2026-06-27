@@ -17,6 +17,16 @@ from .errors import (
     VendorNotConfiguredError,
     VendorRateLimitError,
 )
+from .china_data import (
+    get_balance_sheet_china,
+    get_cashflow_china,
+    get_fundamentals_china,
+    get_global_news_china,
+    get_income_statement_china,
+    get_insider_transactions_china,
+    get_news_china,
+    get_stock_data_china,
+)
 from .fred import get_macro_data as get_fred_macro_data
 from .polymarket import get_prediction_markets as get_polymarket_prediction_markets
 from .y_finance import (
@@ -79,6 +89,7 @@ TOOLS_CATEGORIES = {
 
 VENDOR_LIST = [
     "yfinance",
+    "china",
     "fred",
     "polymarket",
     "alpha_vantage",
@@ -97,41 +108,50 @@ VENDOR_METHODS = {
     "get_stock_data": {
         "alpha_vantage": get_alpha_vantage_stock,
         "yfinance": get_YFin_data_online,
+        "china": get_stock_data_china,  # akshare A-stock OHLCV
     },
     # technical_indicators
     "get_indicators": {
         "alpha_vantage": get_alpha_vantage_indicator,
         "yfinance": get_stock_stats_indicators_window,
+        "china": get_stock_stats_indicators_window,  # computed locally from price data
     },
     # fundamental_data
     "get_fundamentals": {
         "alpha_vantage": get_alpha_vantage_fundamentals,
         "yfinance": get_yfinance_fundamentals,
+        "china": get_fundamentals_china,
     },
     "get_balance_sheet": {
         "alpha_vantage": get_alpha_vantage_balance_sheet,
         "yfinance": get_yfinance_balance_sheet,
+        "china": get_balance_sheet_china,
     },
     "get_cashflow": {
         "alpha_vantage": get_alpha_vantage_cashflow,
         "yfinance": get_yfinance_cashflow,
+        "china": get_cashflow_china,
     },
     "get_income_statement": {
         "alpha_vantage": get_alpha_vantage_income_statement,
         "yfinance": get_yfinance_income_statement,
+        "china": get_income_statement_china,
     },
     # news_data
     "get_news": {
         "alpha_vantage": get_alpha_vantage_news,
         "yfinance": get_news_yfinance,
+        "china": get_news_china,
     },
     "get_global_news": {
         "yfinance": get_global_news_yfinance,
         "alpha_vantage": get_alpha_vantage_global_news,
+        "china": get_global_news_china,
     },
     "get_insider_transactions": {
         "alpha_vantage": get_alpha_vantage_insider_transactions,
         "yfinance": get_yfinance_insider_transactions,
+        "china": get_insider_transactions_china,
     },
     # macro_data
     "get_macro_indicators": {

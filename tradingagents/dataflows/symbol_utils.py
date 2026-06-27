@@ -30,6 +30,69 @@ from .errors import NoMarketDataError as NoMarketDataError
 logger = logging.getLogger(__name__)
 
 
+# ============================================================================
+# Chinese A-stock auto-suffix detection
+# ============================================================================
+# 6-digit code -> exchange suffix mapping for Yahoo Finance compatibility.
+# Rules based on China Securities Regulatory Commission exchange assignments.
+#
+# Shanghai Stock Exchange (SSE):
+#   600xxx, 601xxx, 603xxx, 605xxx -> .SS  (Main Board)
+#   688xxx                        -> .SS  (STAR Market / 科创板)
+#
+# Shenzhen Stock Exchange (SZSE):
+#   000xxx, 001xxx, 002xxx, 003xxx -> .SZ (Main Board / SME)
+#   300xxx, 301xxx                 -> .SZ (ChiNext / 创业板)
+#
+# Beijing Stock Exchange (BSE):
+#   8xxxxx                        -> .BJ (北交所)
+#   4xxxxx                        -> .BJ (新三板精选层转板)
+
+_A_STOCK_SHANGHAI = re.compile(r"^60[0-35]\d{3}$")   # 600xxx, 601xxx, 603xxx, 605xxx
+_A_STOCK_STAR = re.compile(r"^688\d{3}$")              # 688xxx STAR Market
+_A_STOCK_SHENZHEN = re.compile(r"^00[0-3]\d{3}$")     # 000xxx-003xxx
+_A_STOCK_CHINEXT = re.compile(r"^30[01]\d{3}$")       # 300xxx, 301xxx
+_A_STOCK_BEIJING = re.compile(r"^[48]\d{5}$")         # 4xxxxx, 8xxxxx
+
+# Pure 6-digit number (for checking if user input is a stock code)
+_A_STOCK_6DIGIT = re.compile(r"^\d{6}$")
+
+
+def _detect_china_suffix(code: str) -> str | None:
+    """Detect Chinese exchange suffix for a 6-digit stock code.
+
+    Returns the Yahoo-compatible suffix (e.g. '.SS', '.SZ', '.BJ')
+    or None if the code doesn't match known A-stock patterns.
+    """
+    if _A_STOCK_SHANGHAI.match(code) or _A_STOCK_STAR.match(code):
+        return ".SS"
+    if _A_STOCK_SHENZHEN.match(code) or _A_STOCK_CHINEXT.match(code):
+        return ".SZ"
+    if _A_STOCK_BEIJING.match(code):
+        return ".BJ"
+    return None
+
+
+def _normalize_china_stock(s: str) -> str | None:
+    """Auto-append exchange suffix to a pure 6-digit A-stock code.
+
+    Examples:
+        600519  -> 600519.SS  (贵州茅台/上海)
+        000001  -> 000001.SZ  (平安银行/深圳)
+        300750  -> 300750.SZ  (宁德时代/创业板)
+        688981  -> 688981.SS  (中芯国际/科创板)
+        836149  -> 836149.BJ  (北交所)
+
+    Returns the suffixed symbol or None if not a recognized A-stock code.
+    """
+    suffix = _detect_china_suffix(s)
+    if suffix:
+        canonical = s + suffix
+        logger.info("Auto-detected A-stock code %s -> %s", s, canonical)
+        return canonical
+    return None
+
+
 # ISO-4217 codes common enough to appear in retail forex pairs. A bare
 # six-letter symbol whose halves are BOTH in this set is treated as a spot
 # forex pair and given Yahoo's ``=X`` suffix.
@@ -100,6 +163,7 @@ def normalize_symbol(raw: str) -> str:
     """Map a user/broker symbol to its canonical Yahoo Finance symbol.
 
     Resolution order (first match wins):
+      0. Chinese A-stock: pure 6-digit code -> CODE.SS/.SZ/.BJ.
       1. Explicit alias table (metals, energy, index CFDs).
       2. Crypto rule: a known crypto base quoted in USD/USDT/USDC (dashed or
          not) -> ``BASE-USD``.
@@ -118,6 +182,12 @@ def normalize_symbol(raw: str) -> str:
     # Broker CFD/qualifier suffixes Yahoo never uses.
     s = s.rstrip("+")
 
+    # Step 0: Chinese A-stock auto-detection (6-digit code -> CODE.SS/.SZ/.BJ)
+    china = _normalize_china_stock(s)
+    if china is not None:
+        return china
+
+    # Step 1: Explicit alias table (metals, energy, index CFDs).
     crypto = _normalize_crypto(s)
     if s in _ALIASES:
         canonical = _ALIASES[s]
