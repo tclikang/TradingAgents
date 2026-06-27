@@ -58,3 +58,88 @@ def get_insider_transactions(
         str: A report of insider transaction data
     """
     return route_to_vendor("get_insider_transactions", ticker)
+
+
+@tool
+def get_company_announcements(
+    ticker: Annotated[str, "Ticker symbol (e.g., '688299')"],
+    curr_date: Annotated[str | None, "Current date in yyyy-mm-dd format"] = None,
+) -> str:
+    """
+    Retrieve company announcements and disclosures for a stock.
+    Includes board resolutions, financial reports, material events,
+    shareholder meetings, and regulatory filings from the official
+    exchange disclosure platform (巨潮资讯网). Use this to check for
+    recent events that may impact the stock price but are not covered
+    by general news feeds.
+
+    Args:
+        ticker: Ticker symbol
+        curr_date: Analysis date (for filtering recent announcements)
+
+    Returns:
+        Formatted list of recent company announcements with dates and types
+    """
+    return route_to_vendor("get_company_announcements", ticker, curr_date)
+
+
+@tool
+def get_research_reports(
+    ticker: Annotated[str, "Ticker symbol (e.g., '688299')"],
+) -> str:
+    """
+    Retrieve analyst research reports for a stock from Eastmoney's
+    research report database. Each entry includes the report title,
+    analyst rating (买入/增持/中性/减持/卖出), target price, research
+    institution, and a summary. Use this to understand professional
+    analyst consensus and valuation expectations.
+
+    Args:
+        ticker: Ticker symbol
+
+    Returns:
+        Formatted list of research reports with ratings and summaries
+    """
+    return route_to_vendor("get_research_reports", ticker)
+
+
+@tool
+def get_market_news(
+    curr_date: Annotated[str, "Current date in yyyy-mm-dd format"],
+    look_back_days: Annotated[int, "Days to look back"] = 7,
+    limit: Annotated[int, "Max articles per source"] = 15,
+) -> str:
+    """
+    Retrieve comprehensive Chinese market news from multiple sources
+    (东方财富 and 新浪财经). Provides broader coverage than get_global_news
+    by aggregating financial headlines from different media outlets.
+    Use this for market-wide sentiment analysis and macro event tracking.
+
+    Args:
+        curr_date: Current date in yyyy-mm-dd format
+        look_back_days: Number of days to look back
+        limit: Maximum number of articles per source
+
+    Returns:
+        Aggregated market news from multiple Chinese financial media
+    """
+    return route_to_vendor("get_market_news", curr_date, look_back_days, limit)
+
+
+@tool
+def get_sector(
+    symbol: Annotated[str, "Stock code (e.g., '688299')"],
+) -> str:
+    """
+    Retrieve sector and concept board information for a stock.
+    Identifies which industry sectors and concept boards the stock belongs
+    to, and provides current hot sector rankings. Use this to understand
+    the stock's sector positioning and whether its sector is in favor.
+
+    Args:
+        symbol: Stock code
+
+    Returns:
+        Sector affiliation data and hot concept board rankings
+    """
+    return route_to_vendor("get_sector", symbol)

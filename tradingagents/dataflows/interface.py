@@ -20,11 +20,15 @@ from .errors import (
 from .china_data import (
     get_balance_sheet_china,
     get_cashflow_china,
+    get_company_announcements_china,
     get_fundamentals_china,
     get_global_news_china,
     get_income_statement_china,
     get_insider_transactions_china,
+    get_market_news_china,
     get_news_china,
+    get_research_reports_china,
+    get_sector_china,
     get_stock_data_china,
 )
 from .fred import get_macro_data as get_fred_macro_data
@@ -66,11 +70,15 @@ TOOLS_CATEGORIES = {
         ]
     },
     "news_data": {
-        "description": "News and insider data",
+        "description": "News, announcements, research reports, and insider data",
         "tools": [
             "get_news",
             "get_global_news",
             "get_insider_transactions",
+            "get_company_announcements",
+            "get_research_reports",
+            "get_market_news",
+            "get_sector",
         ]
     },
     "macro_data": {
@@ -152,6 +160,18 @@ VENDOR_METHODS = {
         "alpha_vantage": get_alpha_vantage_insider_transactions,
         "yfinance": get_yfinance_insider_transactions,
         "china": get_insider_transactions_china,
+    },
+    "get_company_announcements": {
+        "china": get_company_announcements_china,
+    },
+    "get_research_reports": {
+        "china": get_research_reports_china,
+    },
+    "get_market_news": {
+        "china": get_market_news_china,
+    },
+    "get_sector": {
+        "china": get_sector_china,
     },
     # macro_data
     "get_macro_indicators": {
