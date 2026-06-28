@@ -19,7 +19,6 @@ from tradingagents.agents.utils.market_data_validation_tools import get_verified
 from tradingagents.agents.utils.news_data_tools import (
     get_company_announcements,
     get_global_news,
-    get_insider_transactions,
     get_market_news,
     get_news,
     get_research_reports,
@@ -39,7 +38,6 @@ __all__ = [
     "get_income_statement",
     "get_news",
     "get_global_news",
-    "get_insider_transactions",
     "get_company_announcements",
     "get_research_reports",
     "get_market_news",

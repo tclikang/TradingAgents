@@ -20,7 +20,6 @@ from tradingagents.agents.utils.agent_utils import (
     get_global_news,
     get_income_statement,
     get_indicators,
-    get_insider_transactions,
     get_macro_indicators,
     get_market_news,
     get_news,
@@ -188,7 +187,6 @@ class TradingAgentsGraph:
                     # News and insider information
                     get_news,
                     get_global_news,
-                    get_insider_transactions,
                     get_company_announcements,
                     get_research_reports,
                     get_market_news,
