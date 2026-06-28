@@ -421,7 +421,7 @@ def get_insider_transactions_china(
 
 
 # ============================================================================
-# Company Announcements (akshare stock_zh_a_disclosure)
+# Company Announcements (akshare stock_zh_a_disclosure_report_cninfo)
 # ============================================================================
 
 
@@ -431,9 +431,9 @@ def get_company_announcements_china(
 ) -> str:
     """Retrieve company announcements/disclosures for an A-stock.
 
-    Uses akshare's ``stock_zh_a_disclosure`` which scrapes the official
-    exchange disclosure platform (巨潮资讯网). Returns structured
-    announcement metadata (title, date, type).
+    Uses akshare's ``stock_zh_a_disclosure_report_cninfo`` which scrapes
+    the official exchange disclosure platform (巨潮资讯网). Returns
+    structured announcement metadata (title, date, type).
 
     Args:
         ticker: Stock code (e.g. "688299")
@@ -452,9 +452,9 @@ def get_company_announcements_china(
     lines.append("")
 
     try:
-        # stock_zh_a_disclosure: 巨潮资讯网-个股披露公告
-        # Returns columns: 代码, 简称, 公告标题, 公告类型, 公告日期, 全文链接
-        df = ak.stock_zh_a_disclosure(symbol=code)
+        # stock_zh_a_disclosure_report_cninfo: 巨潮资讯网-个股披露公告
+        # Returns: 股票代码, 公司简称, 公告标题, 公告时间, 公告链接
+        df = ak.stock_zh_a_disclosure_report_cninfo(symbol=code)
 
         if df is None or df.empty:
             lines.append("No recent announcements found for this stock.")
@@ -465,17 +465,14 @@ def get_company_announcements_china(
         for _, row in df.iterrows():
             if shown >= max_items:
                 break
-            title = row.get("公告标题") or row.get("title", "")
-            category = row.get("公告类型") or row.get("type", "")
-            date_val = row.get("公告日期") or row.get("date", "")
-            url = row.get("全文链接") or row.get("url", "")
-            code_val = row.get("代码") or row.get("code", "")
-            name_val = row.get("简称") or row.get("name", "")
+            # Actual columns: 股票代码, 公司简称, 公告标题, 公告时间, 公告链接
+            title = row.get("公告标题") or str(row.iloc[2]) if len(row) > 2 else ""
+            date_val = row.get("公告时间") or str(row.iloc[3]) if len(row) > 3 else ""
+            url = row.get("公告链接") or str(row.iloc[4]) if len(row) > 4 else ""
+            code_val = row.get("股票代码") or str(row.iloc[0]) if len(row) > 0 else ""
 
             shown += 1
             parts = [f"{shown}. {title}"]
-            if category and str(category).strip():
-                parts.append(f"   类型: {category}")
             if date_val and str(date_val).strip():
                 parts.append(f"   日期: {date_val}")
             if url and str(url).strip():

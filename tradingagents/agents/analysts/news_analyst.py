@@ -1,12 +1,16 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from tradingagents.agents.utils.agent_utils import (
+    get_company_announcements,
     get_global_news,
     get_instrument_context_from_state,
     get_language_instruction,
     get_macro_indicators,
+    get_market_news,
     get_news,
     get_prediction_markets,
+    get_research_reports,
+    get_sector,
 )
 
 
@@ -20,13 +24,42 @@ def create_news_analyst(llm):
         tools = [
             get_news,
             get_global_news,
+            get_market_news,
             get_macro_indicators,
             get_prediction_markets,
         ]
 
+        # For A-stocks (China market), auto-include China-specific tools
+        ticker = state.get("ticker", "")
+        if ticker and (ticker.endswith(".SS") or ticker.endswith(".SZ") or ticker.endswith(".BJ")):
+            tools.extend([
+                get_company_announcements,
+                get_research_reports,
+                get_sector,
+            ])
+
         system_message = (
-            f"You are a news researcher tasked with analyzing recent news and trends over the past week. Please write a comprehensive report of the current state of the world that is relevant for trading and macroeconomics. Use the available tools: get_news(query, start_date, end_date) for {asset_label}-specific or targeted news searches, get_global_news(curr_date, look_back_days, limit) for broader macroeconomic news, get_macro_indicators(indicator, curr_date, look_back_days) to ground macro commentary in actual data from FRED (e.g. 'cpi', 'core_pce', 'unemployment', 'fed_funds_rate', '10y_treasury', 'yield_curve'), and get_prediction_markets(topic, limit) for live market-implied probabilities of forward-looking events (e.g. 'Fed rate cut', 'recession 2026', geopolitical or sector events). Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
-            + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
+            f"You are a news researcher tasked with analyzing recent news and trends over the past week. Please write a comprehensive report of the current state of the world that is relevant for trading and macroeconomics."
+            " Use the available tools:\n"
+            f"  - get_news(query, start_date, end_date): {asset_label}-specific or targeted news searches\n"
+            "  - get_global_news(curr_date, look_back_days, limit): broader macroeconomic news\n"
+            "  - get_market_news(curr_date, look_back_days, limit): multi-source China market news from Eastmoney and Sina (REQUIRED for Chinese stocks)\n"
+            f"  - get_macro_indicators(indicator, curr_date, look_back_days): FRED macro data (CPI, unemployment, fed funds rate, 10y treasury, yield curve)\n"
+            "  - get_prediction_markets(topic, limit): live market-implied probabilities of forward-looking events\n"
+        )
+        # Conditionally document China-specific tools
+        has_china = any(t.name == "get_company_announcements" for t in tools)
+        if has_china:
+            system_message += (
+                "  - get_company_announcements(ticker, curr_date): REQUIRED - fetch official company announcements from the exchange disclosure platform (board resolutions, material events, filings)\n"
+                "  - get_research_reports(ticker): REQUIRED - fetch analyst research reports with ratings, target prices and summaries from Eastmoney\n"
+                "  - get_sector(symbol): REQUIRED - fetch sector/concept board affiliation and hot sector rankings\n"
+            )
+
+        system_message += (
+            " Provide specific, actionable insights with supporting evidence to help traders make informed decisions.\n"
+            " IMPORTANT: For Chinese A-stock analysis, you MUST call get_market_news, get_company_announcements, get_research_reports, and get_sector in addition to get_news — these provide critical China-specific data not available from general news sources."
+            + "\n Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."
             + get_language_instruction()
         )
 

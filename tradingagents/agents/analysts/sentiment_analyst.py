@@ -31,9 +31,13 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from tradingagents.agents.schemas import SentimentReport, render_sentiment_report
 from tradingagents.agents.utils.agent_utils import (
+    get_company_announcements,
     get_instrument_context_from_state,
     get_language_instruction,
+    get_market_news,
     get_news,
+    get_research_reports,
+    get_sector,
 )
 from tradingagents.agents.utils.structured import (
     bind_structured,
@@ -63,10 +67,26 @@ def create_sentiment_analyst(llm):
         start_date = _seven_days_back(end_date)
         instrument_context = get_instrument_context_from_state(state)
 
-        # Pre-fetch all three sources. Each fetcher degrades gracefully and
+        # Determine if this is an A-stock
+        is_a_stock = ticker and (ticker.endswith(".SS") or ticker.endswith(".SZ") or ticker.endswith(".BJ"))
+
+        # Pre-fetch all sources. Each fetcher degrades gracefully and
         # returns a string (no exceptions surface from here), so the LLM
         # always sees something — either real data or a clear placeholder.
         news_block = get_news.func(ticker, start_date, end_date)
+
+        # For A-stocks, also pre-fetch China-specific sources
+        china_announcements_block = ""
+        china_research_block = ""
+        china_sector_block = ""
+        china_market_block = ""
+        if is_a_stock:
+            china_raw = ticker.replace(".SS", "").replace(".SZ", "").replace(".BJ", "")
+            china_announcements_block = get_company_announcements.func(china_raw, end_date)
+            china_research_block = get_research_reports.func(china_raw)
+            china_sector_block = get_sector.func(china_raw)
+            china_market_block = get_market_news.func(end_date, 7, 15)
+
         stocktwits_block = fetch_stocktwits_messages(ticker, limit=30)
         reddit_block = fetch_reddit_posts(ticker)
 
@@ -77,6 +97,11 @@ def create_sentiment_analyst(llm):
             news_block=news_block,
             stocktwits_block=stocktwits_block,
             reddit_block=reddit_block,
+            china_announcements_block=china_announcements_block,
+            china_research_block=china_research_block,
+            china_sector_block=china_sector_block,
+            china_market_block=china_market_block,
+            is_a_stock=is_a_stock,
         )
 
         prompt = ChatPromptTemplate.from_messages(
@@ -126,19 +151,58 @@ def _build_system_message(
     news_block: str,
     stocktwits_block: str,
     reddit_block: str,
+    china_announcements_block: str = "",
+    china_research_block: str = "",
+    china_sector_block: str = "",
+    china_market_block: str = "",
+    is_a_stock: bool = False,
 ) -> str:
     """Assemble the sentiment-analyst system message with structured data blocks."""
-    return f"""You are a financial market sentiment analyst. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}, drawing on three complementary data sources that have already been collected for you.
+    msg = f"""You are a financial market sentiment analyst. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}, drawing on multiple complementary data sources that have already been collected for you.
 
 ## Data sources (pre-fetched, in this prompt)
 
-### News headlines — Yahoo Finance, past 7 days
+### News headlines — {ticker}-specific news, past 7 days
 Institutional framing. Fact-driven, slower-moving signal.
 
 <start_of_news>
 {news_block}
 <end_of_news>
+"""
 
+    # For A-stocks, insert China-specific data blocks BEFORE StockTwits/Reddit
+    if is_a_stock and china_announcements_block.strip():
+        msg += f"""
+### Company Announcements — Official exchange disclosure platform (巨潮资讯网)
+Board resolutions, material events, regulatory filings. Authoritative, mandatory disclosures.
+
+<start_of_announcements>
+{china_announcements_block}
+<end_of_announcements>
+
+### Analyst Research Reports — Eastmoney research database
+Professional analyst ratings, target prices, earnings forecasts. Institutional sentiment signal.
+
+<start_of_research_reports>
+{china_research_block}
+<end_of_research_reports>
+
+### Sector & Concept Board Analysis
+Industry classification, sector rankings, hot concept boards for context on whether {ticker}'s sector is in favor.
+
+<start_of_sector>
+{china_sector_block}
+<end_of_sector>
+
+### Multi-Source China Market News — Eastmoney + Sina Finance
+Aggregated Chinese financial news from multiple media outlets. Broader coverage than general news.
+
+<start_of_market_news>
+{china_market_block}
+<end_of_market_news>
+"""
+
+    msg += f"""
 ### StockTwits messages — retail-trader social platform indexed by cashtag
 Fast-moving signal. Each message carries a user-labeled sentiment tag (Bullish / Bearish / no-label) plus the message body.
 
@@ -154,14 +218,21 @@ Community discussion. Engagement signal via upvote score and comment count. Subr
 <end_of_reddit>
 
 ## How to analyze this data (best practices)
+"""
 
-1. **Read the StockTwits Bullish/Bearish ratio as a leading retail-sentiment signal.** A 70/30 bullish/bearish split is moderately bullish; ≥90/10 may indicate over-extension and contrarian risk; 50/50 is uncertainty. Sample size matters — base rates on the actual message count, not percentages alone.
+    if is_a_stock:
+        msg += """
+**For Chinese A-stocks:** The Company Announcements, Research Reports, Sector Analysis, and Multi-Source Market News sections above are your PRIMARY sentiment sources — they provide official, authoritative Chinese market data. The general news, StockTwits, and Reddit sections are supplementary only. Weight the Chinese data sources higher when assessing sentiment for this stock.
+
+"""
+
+    msg += f"""1. **Read the StockTwits Bullish/Bearish ratio as a leading retail-sentiment signal.** A 70/30 bullish/bearish split is moderately bullish; >=90/10 may indicate over-extension and contrarian risk; 50/50 is uncertainty. Sample size matters — base rates on the actual message count, not percentages alone.
 
 2. **Look for cross-source divergences.** If news framing is bearish but StockTwits is overwhelmingly bullish, that mismatch is itself a signal — it can mean retail is leaning into a thesis the news flow hasn't caught up to (or vice versa, that retail is chasing while institutions are cautious).
 
 3. **Weight Reddit posts by engagement.** A 400-upvote / 200-comment thread reflects community attention; a 3-upvote post is noise. Read the body excerpts for context — the title alone often misleads.
 
-4. **Distinguish opinion from event.** A news headline ("Nvidia announces $500M Corning deal") is an event; a StockTwits post ("buying NVDA, this is going to moon") is opinion. Both are inputs but should be weighted differently in your conclusions.
+4. **Distinguish opinion from event.** A news headline is an event; a StockTwits post is opinion. Both are inputs but should be weighted differently in your conclusions.
 
 5. **Identify recurring narrative themes.** What topic keeps coming up across sources? That's the dominant narrative driving current sentiment.
 
@@ -181,6 +252,7 @@ Fill the following fields:
 - **narrative**: Full source-by-source breakdown, divergences, dominant narrative themes, catalysts and risks, and a markdown summary table of key sentiment signals (direction, source, supporting evidence).
 
 {get_language_instruction()}"""
+    return msg
 
 
 # ---------------------------------------------------------------------------
