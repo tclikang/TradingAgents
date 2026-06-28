@@ -53,7 +53,16 @@ class GraphSetup:
                 - "social": Social media analyst
                 - "news": News analyst
                 - "fundamentals": Fundamentals analyst
+
+        Note:
+            For stock analysis, ALL FOUR analysts are always forced — the
+            multi-agent framework requires full cross-source coverage for
+            reliable decisions. The selected_analysts parameter is retained
+            for back-compat with saved configs and non-stock asset types.
         """
+        # Force all 4 analysts for comprehensive coverage
+        # (the multi-agent framework is designed to have all voices)
+        selected_analysts = ("market", "social", "news", "fundamentals")
         plan = build_analyst_execution_plan(selected_analysts)
 
         analyst_factories = {

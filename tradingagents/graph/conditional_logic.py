@@ -50,21 +50,34 @@ class ConditionalLogic:
         return "Msg Clear Fundamentals"
 
     def should_continue_debate(self, state: AgentState) -> str:
-        """Determine if debate should continue."""
+        """Determine if debate should continue.
 
-        if (
-            state["investment_debate_state"]["count"] >= 2 * self.max_debate_rounds
-        ):  # 3 rounds of back-and-forth between 2 agents
+        Guarantees both Bull and Bear researchers speak at least once,
+        then continues up to max_debate_rounds of back-and-forth.
+        """
+        min_rounds = 2  # one turn each (Bull, Bear)
+        max_total = 2 * max(self.max_debate_rounds, 1)
+        effective_limit = max(min_rounds, max_total)
+
+        if state["investment_debate_state"]["count"] >= effective_limit:
             return "Research Manager"
         if state["investment_debate_state"]["current_response"].startswith("Bull"):
             return "Bear Researcher"
         return "Bull Researcher"
 
     def should_continue_risk_analysis(self, state: AgentState) -> str:
-        """Determine if risk analysis should continue."""
-        if (
-            state["risk_debate_state"]["count"] >= 3 * self.max_risk_discuss_rounds
-        ):  # 3 rounds of back-and-forth between 3 agents
+        """Determine if risk analysis should continue.
+
+        Guarantees every risk analyst (Aggressive, Conservative, Neutral)
+        speaks at least once regardless of max_risk_discuss_rounds.
+        After the minimum round, continues until max_risk_discuss_rounds
+        rounds of back-and-forth among all 3 agents are exhausted.
+        """
+        min_rounds = 3  # one turn per analyst (Aggressive, Conservative, Neutral)
+        max_total = 3 * max(self.max_risk_discuss_rounds, 1)
+        effective_limit = max(min_rounds, max_total)
+
+        if state["risk_debate_state"]["count"] >= effective_limit:
             return "Portfolio Manager"
         if state["risk_debate_state"]["latest_speaker"].startswith("Aggressive"):
             return "Conservative Analyst"
