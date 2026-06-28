@@ -2,13 +2,16 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from tradingagents.agents.utils.agent_utils import (
     get_company_announcements,
+    get_fund_flow,
     get_global_news,
+    get_hot_rank,
     get_instrument_context_from_state,
     get_language_instruction,
     get_macro_indicators,
     get_market_news,
     get_news,
     get_prediction_markets,
+    get_profit_forecast,
     get_research_reports,
     get_sector,
 )
@@ -36,6 +39,9 @@ def create_news_analyst(llm):
                 get_company_announcements,
                 get_research_reports,
                 get_sector,
+                get_hot_rank,
+                get_fund_flow,
+                get_profit_forecast,
             ])
 
         system_message = (
@@ -43,7 +49,7 @@ def create_news_analyst(llm):
             " Use the available tools:\n"
             f"  - get_news(query, start_date, end_date): {asset_label}-specific or targeted news searches\n"
             "  - get_global_news(curr_date, look_back_days, limit): broader macroeconomic news\n"
-            "  - get_market_news(curr_date, look_back_days, limit): multi-source China market news from Eastmoney and Sina (REQUIRED for Chinese stocks)\n"
+            "  - get_market_news(curr_date, look_back_days, limit): multi-source China market news (东方财富+新浪+同花顺) — REQUIRED for Chinese stocks\n"
             f"  - get_macro_indicators(indicator, curr_date, look_back_days): FRED macro data (CPI, unemployment, fed funds rate, 10y treasury, yield curve)\n"
             "  - get_prediction_markets(topic, limit): live market-implied probabilities of forward-looking events\n"
         )
@@ -51,9 +57,12 @@ def create_news_analyst(llm):
         has_china = any(t.name == "get_company_announcements" for t in tools)
         if has_china:
             system_message += (
-                "  - get_company_announcements(ticker, curr_date): REQUIRED - fetch official company announcements from the exchange disclosure platform (board resolutions, material events, filings)\n"
-                "  - get_research_reports(ticker): REQUIRED - fetch analyst research reports with ratings, target prices and summaries from Eastmoney\n"
+                "  - get_company_announcements(ticker, curr_date): REQUIRED - fetch official company announcements from the exchange disclosure platform (巨潮资讯网)\n"
+                "  - get_research_reports(ticker): REQUIRED - fetch analyst research reports with ratings, target prices and summaries (东方财富)\n"
                 "  - get_sector(symbol): REQUIRED - fetch sector/concept board affiliation and hot sector rankings\n"
+                "  - get_hot_rank(symbol): fetch stock popularity rank from 东方财富人气榜 — top rank indicates strong retail attention\n"
+                "  - get_fund_flow(symbol): fetch daily capital flow by investor category (超大单/大单/中单/小单) — reveals institutional accumulation/distribution\n"
+                "  - get_profit_forecast(symbol): fetch analyst consensus EPS forecasts from 同花顺 — shows market earnings expectations\n"
             )
 
         system_message += (

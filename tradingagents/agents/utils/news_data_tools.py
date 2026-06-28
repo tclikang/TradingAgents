@@ -143,3 +143,61 @@ def get_sector(
         Sector affiliation data and hot concept board rankings
     """
     return route_to_vendor("get_sector", symbol)
+
+
+@tool
+def get_hot_rank(
+    symbol: Annotated[str, "Stock code (e.g., '000651')"],
+) -> str:
+    """
+    Retrieve stock popularity ranking from 东方财富人气榜 (Eastmoney Hot Rank).
+    Shows the stock's current popularity rank among all A-stocks, with
+    price and change data. High rank indicates strong retail investor
+    attention — useful as a sentiment/momentum signal.
+
+    Args:
+        symbol: Stock code
+
+    Returns:
+        Popularity ranking and context (top 10 list)
+    """
+    return route_to_vendor("get_hot_rank", symbol)
+
+
+@tool
+def get_fund_flow(
+    symbol: Annotated[str, "Stock code (e.g., '000651')"],
+) -> str:
+    """
+    Retrieve individual stock fund flow data showing daily capital
+    inflows/outflows by investor category (超大单/大单/中单/小单).
+    Positive major fund ($10M+) net inflow suggests institutional
+    accumulation; persistent outflow signals distribution. Covers
+    recent 20 trading days.
+
+    Args:
+        symbol: Stock code
+
+    Returns:
+        Daily fund flow table with net major capital direction
+    """
+    return route_to_vendor("get_fund_flow", symbol)
+
+
+@tool
+def get_profit_forecast(
+    symbol: Annotated[str, "Stock code (e.g., '000651')"],
+) -> str:
+    """
+    Retrieve analyst consensus earnings forecasts from 同花顺 (THS).
+    Shows EPS estimates (min/mean/max) for upcoming fiscal years,
+    number of analysts covering, and industry average for comparison.
+    Use this to understand market expectations for future profitability.
+
+    Args:
+        symbol: Stock code
+
+    Returns:
+        Consensus EPS forecasts by fiscal year with industry context
+    """
+    return route_to_vendor("get_profit_forecast", symbol)

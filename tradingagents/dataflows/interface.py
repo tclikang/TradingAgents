@@ -22,11 +22,14 @@ from .china_data import (
     get_cashflow_china,
     get_company_announcements_china,
     get_fundamentals_china,
+    get_fund_flow_china,
     get_global_news_china,
+    get_hot_rank_china,
     get_income_statement_china,
     get_insider_transactions_china,
     get_market_news_china,
     get_news_china,
+    get_profit_forecast_china,
     get_research_reports_china,
     get_sector_china,
     get_stock_data_china,
@@ -79,6 +82,9 @@ TOOLS_CATEGORIES = {
             "get_research_reports",
             "get_market_news",
             "get_sector",
+            "get_hot_rank",
+            "get_fund_flow",
+            "get_profit_forecast",
         ]
     },
     "macro_data": {
@@ -172,6 +178,15 @@ VENDOR_METHODS = {
     },
     "get_sector": {
         "china": get_sector_china,
+    },
+    "get_hot_rank": {
+        "china": get_hot_rank_china,
+    },
+    "get_fund_flow": {
+        "china": get_fund_flow_china,
+    },
+    "get_profit_forecast": {
+        "china": get_profit_forecast_china,
     },
     # macro_data
     "get_macro_indicators": {

@@ -14,10 +14,13 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from tradingagents.agents.schemas import SentimentReport, render_sentiment_report
 from tradingagents.agents.utils.agent_utils import (
     get_company_announcements,
+    get_fund_flow,
+    get_hot_rank,
     get_instrument_context_from_state,
     get_language_instruction,
     get_market_news,
     get_news,
+    get_profit_forecast,
     get_research_reports,
     get_sector,
 )
@@ -58,12 +61,18 @@ def create_sentiment_analyst(llm):
         china_research_block = ""
         china_sector_block = ""
         china_market_block = ""
+        china_hot_rank_block = ""
+        china_fund_flow_block = ""
+        china_profit_forecast_block = ""
         if is_a_stock:
             china_raw = ticker.replace(".SS", "").replace(".SZ", "").replace(".BJ", "")
             china_announcements_block = get_company_announcements.func(china_raw, end_date)
             china_research_block = get_research_reports.func(china_raw)
             china_sector_block = get_sector.func(china_raw)
             china_market_block = get_market_news.func(end_date, 7, 15)
+            china_hot_rank_block = get_hot_rank.func(china_raw)
+            china_fund_flow_block = get_fund_flow.func(china_raw)
+            china_profit_forecast_block = get_profit_forecast.func(china_raw)
 
         system_message = _build_system_message(
             ticker=ticker,
@@ -74,6 +83,9 @@ def create_sentiment_analyst(llm):
             china_research_block=china_research_block,
             china_sector_block=china_sector_block,
             china_market_block=china_market_block,
+            china_hot_rank_block=china_hot_rank_block,
+            china_fund_flow_block=china_fund_flow_block,
+            china_profit_forecast_block=china_profit_forecast_block,
             is_a_stock=is_a_stock,
         )
 
@@ -123,6 +135,9 @@ def _build_system_message(
     china_research_block: str = "",
     china_sector_block: str = "",
     china_market_block: str = "",
+    china_hot_rank_block: str = "",
+    china_fund_flow_block: str = "",
+    china_profit_forecast_block: str = "",
     is_a_stock: bool = False,
 ) -> str:
     """Assemble the sentiment-analyst system message with structured data blocks."""
@@ -162,12 +177,33 @@ Industry classification, sector rankings, hot concept boards for context on whet
 {china_sector_block}
 <end_of_sector>
 
-### Multi-Source China Market News — Eastmoney + Sina Finance
+### Multi-Source China Market News — Eastmoney + Sina Finance + THS/Tonghuashun
 Aggregated Chinese financial news from multiple media outlets. Broader coverage than general news.
 
 <start_of_market_news>
 {china_market_block}
 <end_of_market_news>
+
+### Stock Popularity Ranking — Eastmoney Hot Rank
+Current popularity rank among all A-stocks. High rank = strong retail attention (controversial or event-driven). Provides market context for understanding sentiment breadth.
+
+<start_of_hot_rank>
+{china_hot_rank_block}
+<end_of_hot_rank>
+
+### Fund Flow — Daily capital flow by investor category
+Capital inflows/outflows by category (超大单/大单/中单/小单) for the last 20 trading days. Major net inflow suggests institutional accumulation; persistent outflow signals distribution.
+
+<start_of_fund_flow>
+{china_fund_flow_block}
+<end_of_fund_flow>
+
+### Consensus Earnings Forecasts — THS/Tonghuashun
+Analyst EPS consensus for upcoming fiscal years. Shows min/mean/max estimates, number of analysts, and industry average for comparison.
+
+<start_of_profit_forecast>
+{china_profit_forecast_block}
+<end_of_profit_forecast>
 """
 
     msg += f"""

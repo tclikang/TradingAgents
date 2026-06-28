@@ -18,9 +18,12 @@ from tradingagents.agents.utils.macro_data_tools import get_macro_indicators
 from tradingagents.agents.utils.market_data_validation_tools import get_verified_market_snapshot
 from tradingagents.agents.utils.news_data_tools import (
     get_company_announcements,
+    get_fund_flow,
     get_global_news,
+    get_hot_rank,
     get_market_news,
     get_news,
+    get_profit_forecast,
     get_research_reports,
     get_sector,
 )
@@ -42,6 +45,9 @@ __all__ = [
     "get_research_reports",
     "get_market_news",
     "get_sector",
+    "get_hot_rank",
+    "get_fund_flow",
+    "get_profit_forecast",
     "get_macro_indicators",
     "get_prediction_markets",
     "get_verified_market_snapshot",
