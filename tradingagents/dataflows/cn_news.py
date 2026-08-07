@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import List
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,11 @@ logger = logging.getLogger(__name__)
 def _get_stock_code_only(ticker: str) -> str:
     """从 '688016.SS' 或 '600519.SS' 中提取纯数字代码。"""
     return ticker.split(".")[0]
+
+
+def _is_valid_stock_code(code: str) -> bool:
+    """校验是否为合法的 A 股代码（6 位纯数字）。"""
+    return bool(re.fullmatch(r"\d{6}", code))
 
 
 # ============================================================
@@ -40,6 +46,8 @@ def fetch_eastmoney_news(ticker: str, limit: int = 15) -> str:
         格式化的 markdown 字符串；失败时返回 <不可用> 占位符。
     """
     code = _get_stock_code_only(ticker)
+    if not _is_valid_stock_code(code):
+        return f"<东方财富个股新闻: {ticker} 非有效A股代码>"
     try:
         import akshare as ak
     except ImportError:
@@ -78,6 +86,8 @@ def fetch_eastmoney_reports(ticker: str, limit: int = 15) -> str:
         格式化的 markdown 字符串。
     """
     code = _get_stock_code_only(ticker)
+    if not _is_valid_stock_code(code):
+        return f"<东方财富研报: {ticker} 非有效A股代码>"
     try:
         import akshare as ak
     except ImportError:

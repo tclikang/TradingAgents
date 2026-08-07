@@ -197,7 +197,7 @@ def pd_to_datetime(series):
                 return pd.Timestamp(f"{m.group(1)}-{int(m.group(2))*3-2:02d}-01")
             return pd.NaT
         return s.apply(_parse_quarter)
-    return pd.to_datetime(s, errors="coerce")
+    return pd.to_datetime(s, errors="coerce", format="mixed")
 
 
 def _fetch_macro_series(ak, key: str):
