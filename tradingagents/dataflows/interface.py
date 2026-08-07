@@ -150,6 +150,15 @@ def route_to_vendor(method: str, *args, **kwargs):
 
     all_available_vendors = list(VENDOR_METHODS[method].keys())
 
+    # Safety net: if no vendors are registered for this method (e.g.
+    # prediction_markets), return a clear unavailable message instead of
+    # crashing — the LLM may still try to call it from old prompts.
+    if not all_available_vendors:
+        return (
+            f"DATA_UNAVAILABLE: '{method}' is not available (no vendor "
+            f"configured). Do not fabricate values — skip this data source."
+        )
+
     # The configured vendor list IS the chain: we do NOT silently fall back to
     # vendors the user did not choose. For multi-vendor fallback, list them
     # in order, e.g. data_vendors="akshare". The "default" sentinel (no

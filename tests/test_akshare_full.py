@@ -738,6 +738,27 @@ class TestForeignVendorsRemoved(unittest.TestCase):
             f"Found files still importing yfinance:\n{result.stdout}"
         )
 
+    def test_prediction_markets_returns_unavailable(self):
+        """get_prediction_markets 应返回不可用消息，不抛异常。"""
+        from tradingagents.dataflows.interface import route_to_vendor
+        result = route_to_vendor("get_prediction_markets", "test topic", 5)
+        self.assertIsInstance(result, str)
+        self.assertIn("DATA_UNAVAILABLE", result)
+
+    def test_news_analyst_does_not_import_prediction_markets(self):
+        """news_analyst.py 不应 import get_prediction_markets。"""
+        import inspect
+        import tradingagents.agents.analysts.news_analyst as na_mod
+        source = inspect.getsource(na_mod)
+        self.assertNotIn("get_prediction_markets", source)
+
+    def test_trading_graph_does_not_import_prediction_markets(self):
+        """trading_graph.py 不应 import get_prediction_markets。"""
+        import inspect
+        import tradingagents.graph.trading_graph as tg_mod
+        source = inspect.getsource(tg_mod)
+        self.assertNotIn("get_prediction_markets", source)
+
 
 if __name__ == "__main__":
     unittest.main()
