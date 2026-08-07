@@ -10,17 +10,6 @@ from .akshare_stock import (
     get_stock_data as get_akshare_stock_data,
     get_stock_stats_indicators_window as get_akshare_indicators,
 )
-from .alpha_vantage import (
-    get_balance_sheet as get_alpha_vantage_balance_sheet,
-    get_cashflow as get_alpha_vantage_cashflow,
-    get_fundamentals as get_alpha_vantage_fundamentals,
-    get_global_news as get_alpha_vantage_global_news,
-    get_income_statement as get_alpha_vantage_income_statement,
-    get_indicator as get_alpha_vantage_indicator,
-    get_insider_transactions as get_alpha_vantage_insider_transactions,
-    get_news as get_alpha_vantage_news,
-    get_stock as get_alpha_vantage_stock,
-)
 from .cn_news import get_global_news_cn, get_news_cn
 from .config import get_config
 from .errors import (
@@ -28,18 +17,6 @@ from .errors import (
     VendorNotConfiguredError,
     VendorRateLimitError,
 )
-from .fred import get_macro_data as get_fred_macro_data
-from .polymarket import get_prediction_markets as get_polymarket_prediction_markets
-from .y_finance import (
-    get_balance_sheet as get_yfinance_balance_sheet,
-    get_cashflow as get_yfinance_cashflow,
-    get_fundamentals as get_yfinance_fundamentals,
-    get_income_statement as get_yfinance_income_statement,
-    get_insider_transactions as get_yfinance_insider_transactions,
-    get_stock_stats_indicators_window,
-    get_YFin_data_online,
-)
-from .yfinance_news import get_global_news_yfinance, get_news_yfinance
 
 logger = logging.getLogger(__name__)
 
@@ -89,10 +66,6 @@ TOOLS_CATEGORIES = {
 }
 
 VENDOR_LIST = [
-    "yfinance",
-    "fred",
-    "polymarket",
-    "alpha_vantage",
     "akshare",
 ]
 
@@ -108,61 +81,40 @@ VENDOR_METHODS = {
     # core_stock_apis
     "get_stock_data": {
         "akshare": get_akshare_stock_data,
-        "alpha_vantage": get_alpha_vantage_stock,
-        "yfinance": get_YFin_data_online,
     },
     # technical_indicators
     "get_indicators": {
         "akshare": get_akshare_indicators,
-        "alpha_vantage": get_alpha_vantage_indicator,
-        "yfinance": get_stock_stats_indicators_window,
     },
     # fundamental_data
     "get_fundamentals": {
         "akshare": get_akshare_fundamentals,
-        "alpha_vantage": get_alpha_vantage_fundamentals,
-        "yfinance": get_yfinance_fundamentals,
     },
     "get_balance_sheet": {
         "akshare": get_akshare_balance_sheet,
-        "alpha_vantage": get_alpha_vantage_balance_sheet,
-        "yfinance": get_yfinance_balance_sheet,
     },
     "get_cashflow": {
         "akshare": get_akshare_cashflow,
-        "alpha_vantage": get_alpha_vantage_cashflow,
-        "yfinance": get_yfinance_cashflow,
     },
     "get_income_statement": {
         "akshare": get_akshare_income_statement,
-        "alpha_vantage": get_alpha_vantage_income_statement,
-        "yfinance": get_yfinance_income_statement,
     },
     # news_data
     "get_news": {
         "akshare": get_news_cn,
-        "alpha_vantage": get_alpha_vantage_news,
-        "yfinance": get_news_yfinance,
     },
     "get_global_news": {
         "akshare": get_global_news_cn,
-        "yfinance": get_global_news_yfinance,
-        "alpha_vantage": get_alpha_vantage_global_news,
     },
     "get_insider_transactions": {
         "akshare": get_akshare_insider_transactions,
-        "alpha_vantage": get_alpha_vantage_insider_transactions,
-        "yfinance": get_yfinance_insider_transactions,
     },
     # macro_data
     "get_macro_indicators": {
         "akshare": get_akshare_macro_data,
-        "fred": get_fred_macro_data,
     },
-    # prediction_markets
-    "get_prediction_markets": {
-        "polymarket": get_polymarket_prediction_markets,
-    },
+    # prediction_markets — disabled (no Chinese prediction market platform)
+    "get_prediction_markets": {},
 }
 
 def get_category_for_method(method: str) -> str:
@@ -199,10 +151,9 @@ def route_to_vendor(method: str, *args, **kwargs):
     all_available_vendors = list(VENDOR_METHODS[method].keys())
 
     # The configured vendor list IS the chain: we do NOT silently fall back to
-    # vendors the user did not choose (#988/#289) — that returned data from an
-    # unexpected source and caused cross-vendor inconsistencies. For multi-vendor
-    # fallback, list them in order, e.g. data_vendors="yfinance,alpha_vantage".
-    # The "default" sentinel (no explicit config) uses all available vendors.
+    # vendors the user did not choose. For multi-vendor fallback, list them
+    # in order, e.g. data_vendors="akshare". The "default" sentinel (no
+    # explicit config) uses all available vendors.
     explicit = [v for v in primary_vendors if v and v != "default"]
     if explicit:
         vendor_chain = [v for v in explicit if v in VENDOR_METHODS[method]]

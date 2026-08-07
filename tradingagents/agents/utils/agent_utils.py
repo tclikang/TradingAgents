@@ -3,7 +3,6 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-import yfinance as yf
 from langchain_core.messages import HumanMessage, RemoveMessage
 
 # Import tools from separate utility files
@@ -79,44 +78,71 @@ def _clean_identity_value(value: Any) -> str | None:
 def resolve_instrument_identity(ticker: str) -> dict:
     """Resolve deterministic identity metadata (company name, sector, …) for a ticker.
 
-    This exists to stop the pipeline from hallucinating a *different* company
-    when a chart pattern suggests a different industry than the real one
-    (#814): without a ground-truth name, the market analyst would pattern-match
-    the price action to a narrative and invent an identity that then cascaded
-    through every downstream agent.
-
-    Best-effort by design: if yfinance is unavailable, rate-limited, or doesn't
-    recognise the ticker, we return ``{}`` and the caller falls back to
-    ticker-only context rather than failing before analysis starts. Cached so
-    the lookup happens at most once per ticker per process.
-
-    The symbol is normalized first (e.g. ``XAUUSD`` -> ``GC=F``) so identity
-    resolves for the same instrument the price path actually fetches (#983).
+    Uses AKShare for A-stocks (.SS/.SZ/.BJ). Returns ``{}`` for non-A-stocks
+    or when data is unavailable. Cached so the lookup happens at most once per
+    ticker per process.
     """
-    from tradingagents.dataflows.symbol_utils import normalize_symbol
+    from tradingagents.dataflows.stockstats_utils import _is_a_stock
 
-    try:
-        info = yf.Ticker(normalize_symbol(ticker)).info or {}
-    except Exception as exc:  # noqa: BLE001 — fail open, never block the run
-        logger.debug("Could not resolve instrument identity for %s: %s", ticker, exc)
+    if not _is_a_stock(ticker):
         return {}
 
+    code = ticker.split(".")[0]
     identity: dict[str, str] = {}
-    company_name = _clean_identity_value(info.get("longName")) or _clean_identity_value(
-        info.get("shortName")
-    )
-    if company_name:
-        identity["company_name"] = company_name
-    for source_key, target_key in (
-        ("sector", "sector"),
-        ("industry", "industry"),
-        ("exchange", "exchange"),
-        ("quoteType", "quote_type"),
-    ):
-        value = _clean_identity_value(info.get(source_key))
-        if value:
-            identity[target_key] = value
+
+    try:
+        import akshare as ak
+
+        # Get company name from stock_info_a_code_name (cached globally)
+        name = _get_astock_name(code)
+        if name:
+            identity["company_name"] = name
+
+        # Resolve exchange
+        suffix = ticker.upper().split(".")[-1] if "." in ticker else ""
+        exchange_map = {"SS": "Shanghai", "SH": "Shanghai", "SZ": "Shenzhen", "BJ": "Beijing"}
+        if suffix in exchange_map:
+            identity["exchange"] = exchange_map[suffix]
+
+        # Get sector/industry from individual info
+        try:
+            info_df = ak.stock_individual_info_em(symbol=code)
+            for _, row in info_df.iterrows():
+                item = str(row.get("item", ""))
+                value = str(row.get("value", ""))
+                if value in ("", "nan", "None"):
+                    continue
+                if "行业" in item or "sector" in item.lower():
+                    identity["sector"] = value
+                elif "板块" in item or "上市" in item:
+                    if "industry" not in identity:
+                        identity["industry"] = value
+        except Exception:
+            pass
+
+    except Exception as exc:
+        logger.debug("Could not resolve A-stock identity for %s: %s", ticker, exc)
+
     return identity
+
+
+# Global cache for stock name lookup (loaded once per process)
+_stock_name_cache: dict[str, str] | None = None
+
+
+def _get_astock_name(code: str) -> str | None:
+    """Get A-stock company name by code, loading cache once."""
+    global _stock_name_cache
+    if _stock_name_cache is None:
+        try:
+            import akshare as ak
+            name_df = ak.stock_info_a_code_name()
+            _stock_name_cache = dict(zip(name_df["code"].astype(str), name_df["name"]))
+            logger.info("Loaded %d A-stock name mappings", len(_stock_name_cache))
+        except Exception as e:
+            logger.warning("Failed to load A-stock name cache: %s", e)
+            _stock_name_cache = {}
+    return _stock_name_cache.get(code)
 
 
 def build_instrument_context(
@@ -174,9 +200,8 @@ def get_instrument_context_from_state(state: Mapping[str, Any]) -> str:
 
     Prefers the identity-resolved context computed once at run start and
     stored on the state (see ``TradingAgentsGraph.resolve_instrument_context``).
-    Falls back to a ticker-only context — with no network lookup — when the
-    state was constructed without it (bare programmatic states, tests), so a
-    consumer is never forced to make a yfinance call mid-graph.
+    Falls back to a ticker-only context when the state was constructed without
+    it (bare programmatic states, tests).
     """
     context = state.get("instrument_context")
     if isinstance(context, str) and context.strip():

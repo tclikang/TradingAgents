@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import yfinance as yf
 from langgraph.prebuilt import ToolNode
 
 # Import the abstract tool methods from agent_utils
@@ -250,7 +249,7 @@ class TradingAgentsGraph:
 
     def _fetch_returns(
         self, ticker: str, trade_date: str, holding_days: int = 5,
-        benchmark: str = "SPY",
+        benchmark: str = "510050.SS",
     ) -> tuple[float | None, float | None, int | None]:
         """Fetch raw and alpha return for ticker over holding_days from trade_date.
 
@@ -259,18 +258,15 @@ class TradingAgentsGraph:
         actual_holding_days)`` or ``(None, None, None)`` if price data is
         unavailable (too recent, delisted, or network error).
         """
-        from tradingagents.dataflows.symbol_utils import normalize_symbol
-
         try:
             start = datetime.strptime(trade_date, "%Y-%m-%d")
-            end = start + timedelta(days=holding_days + 7)  # buffer for weekends/holidays
+            end = start + timedelta(days=holding_days + 7)
             end_str = end.strftime("%Y-%m-%d")
 
-            # Normalize so the realized-return lookup hits the same instrument
-            # the analysis priced (e.g. XAUUSD -> GC=F) (#984). The benchmark is
-            # already a canonical Yahoo symbol from ``_resolve_benchmark``.
-            stock = yf.Ticker(normalize_symbol(ticker)).history(start=trade_date, end=end_str)
-            bench = yf.Ticker(benchmark).history(start=trade_date, end=end_str)
+            from tradingagents.dataflows.stockstats_utils import load_ohlcv
+
+            stock = load_ohlcv(ticker, end_str)
+            bench = load_ohlcv(benchmark, end_str)
 
             if len(stock) < 2 or len(bench) < 2:
                 return None, None, None
@@ -336,7 +332,7 @@ class TradingAgentsGraph:
     def resolve_instrument_context(self, ticker: str, asset_type: str = "stock") -> str:
         """Resolve ticker identity once and return the full instrument context.
 
-        Deterministic yfinance lookup (cached, fail-open) injected into a
+        Deterministic identity lookup (cached, fail-open) injected into a
         context string so every agent anchors to the real company instead of
         hallucinating one from the price chart (#814). Both the propagate()
         path and the CLI call this so the resolved identity reaches the whole

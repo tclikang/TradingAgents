@@ -587,5 +587,157 @@ class TestProxyBypass(unittest.TestCase):
             self.fail(f"_akshare_bypass raised unexpectedly: {e}")
 
 
+# ---------------------------------------------------------------------------
+# 境外数据源彻底移除验证
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestForeignVendorsRemoved(unittest.TestCase):
+    """验证所有境外数据源（yfinance, alpha_vantage, fred, polymarket, reddit, stocktwits）已彻底移除。"""
+
+    def test_no_foreign_vendor_files_exist(self):
+        """验证境外 vendor 模块文件已被删除。"""
+        foreign_modules = [
+            "y_finance.py",
+            "yfinance_news.py",
+            "fred.py",
+            "polymarket.py",
+            "alpha_vantage.py",
+            "alpha_vantage_common.py",
+            "alpha_vantage_fundamentals.py",
+            "alpha_vantage_indicator.py",
+            "alpha_vantage_news.py",
+            "alpha_vantage_stock.py",
+            "reddit.py",
+            "stocktwits.py",
+            "symbol_utils.py",
+        ]
+        from tradingagents.dataflows import __file__ as pkg_init
+        import os
+        dataflows_dir = os.path.dirname(os.path.abspath(pkg_init))
+        for mod in foreign_modules:
+            mod_path = os.path.join(dataflows_dir, mod)
+            self.assertFalse(
+                os.path.exists(mod_path),
+                f"Foreign vendor module should not exist: {mod_path}",
+            )
+
+    def test_vendor_list_only_akshare(self):
+        """VENDOR_LIST 应只包含 'akshare'。"""
+        self.assertEqual(interface.VENDOR_LIST, ["akshare"])
+
+    def test_vendor_methods_only_akshare(self):
+        """VENDOR_METHODS 中所有方法应只用 'akshare' vendor。"""
+        foreign_vendors = {"yfinance", "fred", "polymarket", "alpha_vantage"}
+        for method, vendors in interface.VENDOR_METHODS.items():
+            vendor_set = set(vendors.keys())
+            overlap = vendor_set & foreign_vendors
+            self.assertEqual(
+                overlap, set(),
+                f"Method '{method}' still maps to foreign vendors: {overlap}",
+            )
+
+    def test_get_prediction_markets_is_empty(self):
+        """prediction_markets 应被禁用（空 dict）。"""
+        vendors = interface.VENDOR_METHODS.get("get_prediction_markets", {})
+        self.assertEqual(vendors, {}, "prediction_markets should be empty (disabled)")
+
+    def test_no_yfinance_import_in_interface(self):
+        """interface.py 不应 import yfinance / alpha_vantage / fred / polymarket。"""
+        import inspect
+        import tradingagents.dataflows.interface as iface_mod
+        source = inspect.getsource(iface_mod)
+        forbidden = ["yfinance", "y_finance", "alpha_vantage", "fred", "polymarket", "yfinance_news"]
+        for keyword in forbidden:
+            self.assertNotIn(
+                f"from .{keyword}", source,
+                f"interface.py should not import .{keyword}",
+            )
+
+    def test_no_yfinance_import_in_stockstats_utils(self):
+        """stockstats_utils.py 不应 import yfinance。"""
+        import inspect
+        import tradingagents.dataflows.stockstats_utils as su_mod
+        source = inspect.getsource(su_mod)
+        self.assertNotIn("yfinance", source)
+        self.assertNotIn("YFRateLimitError", source)
+        self.assertNotIn("yf_retry", source)
+
+    def test_no_yfinance_import_in_trading_graph(self):
+        """trading_graph.py 不应 import yfinance。"""
+        import inspect
+        import tradingagents.graph.trading_graph as tg_mod
+        source = inspect.getsource(tg_mod)
+        self.assertNotIn("import yfinance", source)
+        self.assertNotIn("from yfinance", source)
+
+    def test_sentiment_analyst_no_yahoo(self):
+        """sentiment_analyst.py 不应引用 Yahoo Finance。"""
+        import inspect
+        import tradingagents.agents.analysts.sentiment_analyst as sa_mod
+        source = inspect.getsource(sa_mod)
+        self.assertNotIn("yahoo_block", source)
+        self.assertNotIn("Yahoo Finance", source)
+        self.assertNotIn("start_of_yahoo", source)
+        self.assertNotIn("end_of_yahoo", source)
+
+    def test_load_ohlcv_rejects_non_astock(self):
+        """load_ohlcv 应拒绝非 A 股代码。"""
+        from tradingagents.dataflows.stockstats_utils import load_ohlcv
+        with self.assertRaises(ValueError):
+            load_ohlcv("AAPL", "2026-01-01")
+        with self.assertRaises(ValueError):
+            load_ohlcv("TSLA", "2026-01-01")
+        with self.assertRaises(ValueError):
+            load_ohlcv("SPY", "2026-01-01")
+        with self.assertRaises(ValueError):
+            load_ohlcv("GC=F", "2026-01-01")
+
+    def test_cache_filename_uses_ohlcv_not_yfin(self):
+        """缓存文件名应使用 'ohlcv' 而非 'YFin'。"""
+        import inspect
+        import tradingagents.dataflows.stockstats_utils as su_mod
+        source = inspect.getsource(su_mod)
+        self.assertNotIn("YFin-data", source, "Cache filename should use 'ohlcv' not 'YFin'")
+
+    def test_benchmark_map_only_astock(self):
+        """benchmark_map 应只包含 A 股指数。"""
+        from tradingagents.default_config import DEFAULT_CONFIG
+        bm = DEFAULT_CONFIG["benchmark_map"]
+        allowed_suffixes = {".SS", ".SH", ".SZ", ".BJ"}
+        for suffix in bm:
+            self.assertIn(suffix, allowed_suffixes,
+                          f"benchmark_map contains non-A-stock suffix: {suffix}")
+        # 确认不包含境外指数
+        foreign = {"^NSEI", "^BSESN", "^N225", "^HSI", "^FTSE", "^GSPTSE", "^AXJO", "SPY"}
+        for val in bm.values():
+            self.assertNotIn(val, foreign,
+                             f"benchmark_map contains foreign index: {val}")
+
+    def test_no_foreign_vendor_import_anywhere(self):
+        """tradingagents 包中不应有任何地方 import yfinance 模块。"""
+        import subprocess
+        import sys
+        import os
+        tradingagents_dir = os.path.join(
+            os.path.dirname(__file__), "..", "tradingagents"
+        )
+        result = subprocess.run(
+            [
+                sys.executable, "-c",
+                f"import subprocess, sys; "
+                f"r = subprocess.run(['grep', '-rl', 'import yfinance\\|from yfinance', "
+                f"'{os.path.abspath(tradingagents_dir)}'], capture_output=True, text=True); "
+                f"print(r.stdout); sys.exit(1 if r.stdout.strip() else 0)"
+            ],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(
+            result.returncode, 0,
+            f"Found files still importing yfinance:\n{result.stdout}"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

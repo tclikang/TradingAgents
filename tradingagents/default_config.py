@@ -129,7 +129,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # Category-level configuration (default for all tools in category).
     # The configured value is the exact vendor chain — requests are NOT silently
     # routed to vendors you didn't choose. For ordered fallback, list several,
-    # e.g. "yfinance,alpha_vantage". "default" uses all available vendors.
+    # e.g. "akshare". "default" uses all available vendors.
     "data_vendors": {
         "core_stock_apis": "akshare",              # AKShare (东方财富) — A股优先
         "technical_indicators": "akshare",         # AKShare — A股优先
@@ -140,25 +140,17 @@ DEFAULT_CONFIG = _apply_env_overrides({
     },
     # Tool-level configuration (takes precedence over category-level)
     "tool_vendors": {
-        # Example: "get_stock_data": "alpha_vantage",  # Override category default
+        # Example: "get_stock_data": "akshare",  # Override category default
     },
     # Benchmark for alpha calculation in the reflection layer.
     # ``benchmark_ticker`` (when set) overrides the suffix map for all
     # tickers; leave it None to use ``benchmark_map`` for auto-detection
-    # based on the ticker's exchange suffix. SPY remains the US default
-    # so the reflection label keeps reading "Alpha vs SPY" for US tickers
-    # while non-US tickers get their regional index automatically.
+    # based on the ticker's exchange suffix.
     "benchmark_ticker": None,
     "benchmark_map": {
-        ".NS":  "^NSEI",       # NSE India (Nifty 50)
-        ".BO":  "^BSESN",      # BSE India (Sensex)
-        ".T":   "^N225",       # Tokyo (Nikkei 225)
-        ".HK":  "^HSI",        # Hong Kong (Hang Seng)
-        ".L":   "^FTSE",       # London (FTSE 100)
-        ".TO":  "^GSPTSE",     # Toronto (TSX Composite)
-        ".AX":  "^AXJO",       # Australia (ASX 200)
-        ".SS":  "000001.SS",   # Shanghai (SSE Composite)
-        ".SZ":  "399001.SZ",   # Shenzhen (SZSE Component)
-        "":     "SPY",         # default for US-listed tickers (no suffix)
+        ".SS":  "000001.SS",   # Shanghai (SSE Composite Index 上证综指)
+        ".SH":  "000001.SS",   # Shanghai (alias for .SS)
+        ".SZ":  "399001.SZ",   # Shenzhen (SZSE Component Index 深证成指)
+        ".BJ":  "000001.SS",   # Beijing (falls back to SSE Composite)
     },
 })

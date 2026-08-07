@@ -313,7 +313,7 @@ def get_news_cn(
         end_date: 保留（AKShare 返回最新新闻）
 
     Returns:
-        格式化的 markdown 字符串，同 yfinance 新闻格式兼容
+        格式化的 markdown 字符串
     """
     em_news = fetch_eastmoney_news(ticker, limit=15)
     em_reports = fetch_eastmoney_reports(ticker, limit=10)

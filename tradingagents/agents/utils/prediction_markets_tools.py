@@ -16,10 +16,13 @@ def get_prediction_markets(
 ) -> str:
     """
     Retrieve live, market-implied probabilities for forward-looking events from
-    prediction markets (Polymarket): Fed decisions, recession, elections,
+    prediction markets: Fed decisions, recession, elections,
     geopolitics, crypto. Returns the most-traded open markets matching the
     topic, each with its implied probability, traded volume, resolution date,
-    and recent move. Uses the configured prediction_markets vendor.
+    and recent move.
+
+    Note: disabled by default for A-stock analysis (no corresponding Chinese
+    prediction market platform). Uses the configured prediction_markets vendor.
 
     Args:
         topic (str): Event keyword(s) to search

@@ -299,10 +299,7 @@ def get_fundamentals(
         try:
             df = ak.stock_financial_abstract(symbol=code)
         except Exception as e:
-            # 回退到 Yahoo Finance
-            logger.warning("AKShare 基本面获取 %s 失败，回退 yfinance: %s", ticker, e)
-            from .y_finance import get_fundamentals as _yf_fundamentals
-            return _yf_fundamentals(ticker, curr_date)
+            raise NoMarketDataError(ticker, code, f"AKShare 基本面获取失败: {e}") from e
 
     if df is None or df.empty:
         raise NoMarketDataError(ticker, code, "AKShare 基本面数据为空")

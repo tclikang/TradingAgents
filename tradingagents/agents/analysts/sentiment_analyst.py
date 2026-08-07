@@ -1,11 +1,10 @@
 """Sentiment analyst — 多源情绪分析（A股适配版）。
 
-聚合五个互补数据来源，覆盖机构研报、个股新闻、实时快讯：
-  1. Yahoo Finance 新闻          — 国际机构视角
-  2. 东方财富个股新闻 (stock_news_em)           — 该股票直接相关新闻
-  3. 东方财富券商研报 (stock_research_report_em) — 机构评级+盈利预测
-  4. 同花顺全球快讯 (stock_info_global_ths)      — 实时财经快讯
-  5. 新浪财经新闻   (stock_info_global_sina)      — 实时滚动新闻
+聚合四个互补数据来源，覆盖机构研报、个股新闻、实时快讯：
+  1. 东方财富个股新闻 (stock_news_em)           — 该股票直接相关新闻
+  2. 东方财富券商研报 (stock_research_report_em) — 机构评级+盈利预测
+  3. 同花顺全球快讯 (stock_info_global_ths)      — 实时财经快讯
+  4. 新浪财经新闻   (stock_info_global_sina)      — 实时滚动新闻
 
 数据在 LLM 调用前预取并注入 prompt，无需 Tool Call。
 """
@@ -19,7 +18,6 @@ from tradingagents.agents.schemas import SentimentReport, render_sentiment_repor
 from tradingagents.agents.utils.agent_utils import (
     get_instrument_context_from_state,
     get_language_instruction,
-    get_news,
 )
 from tradingagents.agents.utils.structured import (
     NO_EXTERNAL_TOOLS,
@@ -42,9 +40,9 @@ def _seven_days_back(trade_date: str) -> str:
 def create_sentiment_analyst(llm):
     """Create a sentiment analyst node for the trading graph.
 
-    Pre-fetches Yahoo Finance + 4 domestic Chinese news sources, injects
-    them into the prompt as structured blocks, and produces a deterministic
-    sentiment report via structured output (with a free-text fallback).
+    Pre-fetches 4 domestic Chinese news sources, injects them into the
+    prompt as structured blocks, and produces a deterministic sentiment
+    report via structured output (with a free-text fallback).
     """
     structured_llm = bind_structured(llm, SentimentReport, "Sentiment Analyst")
 
@@ -55,7 +53,6 @@ def create_sentiment_analyst(llm):
         instrument_context = get_instrument_context_from_state(state)
 
         # 预取所有数据源
-        yahoo_block = get_news.func(ticker, start_date, end_date)
         em_news = fetch_eastmoney_news(ticker, limit=15)
         em_reports = fetch_eastmoney_reports(ticker, limit=10)
         ths_block = fetch_ths_news(limit=15)
@@ -65,7 +62,6 @@ def create_sentiment_analyst(llm):
             ticker=ticker,
             start_date=start_date,
             end_date=end_date,
-            yahoo_block=yahoo_block,
             em_news=em_news,
             em_reports=em_reports,
             ths_block=ths_block,
@@ -132,46 +128,38 @@ def _build_system_message(
     ticker: str,
     start_date: str,
     end_date: str,
-    yahoo_block: str,
     em_news: str,
     em_reports: str,
     ths_block: str,
     sina_block: str,
 ) -> str:
-    """组装情绪分析师的 system prompt（A股版，5 数据源）。"""
-    return f"""你是一位 A 股市场情绪分析师。请对 {ticker} 在 {start_date} 至 {end_date} 期间的市场情绪做出综合分析报告。以下五个互补数据源已为你预取完毕：
+    """组装情绪分析师的 system prompt（A股版，4 数据源）。"""
+    return f"""你是一位 A 股市场情绪分析师。请对 {ticker} 在 {start_date} 至 {end_date} 期间的市场情绪做出综合分析报告。以下四个互补数据源已为你预取完毕：
 
 ## 数据源
 
-### 1. Yahoo Finance 新闻（英文，近 7 天）
-国际机构视角信息，事实导向，信号较慢。
-
-<start_of_yahoo>
-{yahoo_block}
-<end_of_yahoo>
-
-### 2. 东方财富个股新闻
+### 1. 东方财富个股新闻
 该股票直接相关的 A 股新闻，每条新闻带 [偏多]/[偏空] 情感标签。
 
 <start_of_em_news>
 {em_news}
 <end_of_em_news>
 
-### 3. 东方财富券商研报
+### 2. 东方财富券商研报
 国内券商对该股票的研究报告，包含评级（买入/增持/减持/卖出）和盈利预测数据（EPS/PE），反映专业机构观点。
 
 <start_of_em_reports>
 {em_reports}
 <end_of_em_reports>
 
-### 4. 同花顺财经快讯（10jqka.com.cn）
+### 3. 同花顺财经快讯（10jqka.com.cn）
 实时滚动财经快讯，覆盖 A 股、宏观、行业、国际等最新消息。
 
 <start_of_ths>
 {ths_block}
 <end_of_ths>
 
-### 5. 新浪财经新闻
+### 4. 新浪财经新闻
 新浪实时财经新闻流，包含政策、公司公告、行业动态等。
 
 <start_of_sina>
@@ -184,17 +172,15 @@ def _build_system_message(
 
 2. **新闻偏多/偏空比辅助情绪判断。** 偏多新闻占比 >70% 为积极信号；偏空为主需警惕。
 
-3. **寻找跨来源分歧。** 如果 Yahoo Finance 偏空但国内券商评级持续买入，这种中外视角背离本身就是信号。
+3. **同花顺/新浪快讯提供实时催化剂。** 注意是否有行业政策、公司公告、大单交易等突发事件。
 
-4. **同花顺/新浪快讯提供实时催化剂。** 注意是否有行业政策、公司公告、大单交易等突发事件。
+4. **盈利预测是关键硬数据。** 研报中的 EPS/PE 预测如果持续上调 = 基本面改善信号；持续下调 = 基本面恶化。
 
-5. **盈利预测是关键硬数据。** 研报中的 EPS/PE 预测如果持续上调 = 基本面改善信号；持续下调 = 基本面恶化。
+5. **区分观点与事件。** 新闻标题是事件，研报评级是专业观点，两者权重不同。
 
-6. **区分观点与事件。** 新闻标题是事件，研报评级是专业观点，两者权重不同。
+6. **坦诚数据局限性。** 当某个来源只返回少量内容或"<不可用>"占位符时，情绪判断力度要打折扣。
 
-7. **坦诚数据局限性。** 当某个来源只返回少量内容或"<不可用>"占位符时，情绪判断力度要打折扣。
-
-8. **历史情绪不预测未来。** 将你的结论作为信号供交易员结合基本面和技术面综合参考。
+7. **历史情绪不预测未来。** 将你的结论作为信号供交易员结合基本面和技术面综合参考。
 
 ## 输出字段
 

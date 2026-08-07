@@ -4,22 +4,20 @@ import time
 from typing import Annotated
 
 import pandas as pd
-import yfinance as yf
 from stockstats import wrap
-from yfinance.exceptions import YFRateLimitError
 
 from .config import get_config
-from .symbol_utils import NoMarketDataError, normalize_symbol
+from .errors import NoMarketDataError
 from .utils import safe_ticker_component
 
 logger = logging.getLogger(__name__)
 
 # A vendor's latest OHLCV row this many calendar days before the requested date
 # is treated as stale. Generous enough to span long holiday weekends, tight
-# enough to catch the year-old frames yfinance occasionally returns (#1021).
+# enough to catch stale cached frames (#1021).
 MAX_OHLCV_STALE_DAYS = 10
 
-# A-stock suffixes that should use AKShare instead of Yahoo Finance
+# A-stock suffixes that use AKShare data sources
 _ASTOCK_SUFFIXES = frozenset({".SS", ".SZ", ".SH", ".BJ"})
 
 # How long a same-day cache that does not yet reach the requested day may be
@@ -29,29 +27,10 @@ _ASTOCK_SUFFIXES = frozenset({".SS", ".SZ", ".SH", ".BJ"})
 OHLCV_CACHE_TTL_SECONDS = 900
 
 
-def yf_retry(func, max_retries=3, base_delay=2.0):
-    """Execute a yfinance call with exponential backoff on rate limits.
-
-    yfinance raises YFRateLimitError on HTTP 429 responses but does not
-    retry them internally. This wrapper adds retry logic specifically
-    for rate limits. Other exceptions propagate immediately.
-    """
-    for attempt in range(max_retries + 1):
-        try:
-            return func()
-        except YFRateLimitError:
-            if attempt < max_retries:
-                delay = base_delay * (2 ** attempt)
-                logger.warning(f"Yahoo Finance rate limited, retrying in {delay:.0f}s (attempt {attempt + 1}/{max_retries})")
-                time.sleep(delay)
-            else:
-                raise
-
-
 def _ensure_date_column(data: pd.DataFrame) -> pd.DataFrame:
     """Normalize the date column to ``Date``.
 
-    Some yfinance builds leave the index unnamed (so ``reset_index()`` yields
+    Some vendors leave the index unnamed (so ``reset_index()`` yields
     ``index``) or use ``Datetime`` for intraday data. Rename the first
     date-like column so indicators don't silently drop when it isn't ``Date``.
     """
@@ -81,7 +60,7 @@ def _coerce_ohlcv_dates(data: pd.DataFrame) -> pd.Series:
     """Return parsed dates from an OHLCV frame, whether Date is a column or the index."""
     if "Date" in data.columns:
         return pd.to_datetime(data["Date"], errors="coerce").dropna()
-    # yfinance keeps the dates in the index (a DatetimeIndex, sometimes unnamed).
+    # Some vendors keep dates in the index (a DatetimeIndex, sometimes unnamed).
     if isinstance(data.index, pd.DatetimeIndex):
         return pd.Series(pd.to_datetime(data.index, errors="coerce")).dropna()
     # Fallback: expose the index and look for any date-like column.
@@ -169,7 +148,7 @@ def _needs_same_day_refresh(data_file, curr_date_dt, today_date) -> bool:
     The cache file is keyed per day, so without this a run started before the
     day's bar was final keeps serving that snapshot to every later run (#1150).
     Two distinct staleness cases exist for a current-day request: the bar may be
-    missing entirely, or present but still in progress — Yahoo publishes a
+    missing entirely, or present but still in progress — vendors may publish a
     partial daily candle during market hours, whose ``Close`` is not the closing
     price. Row inspection cannot tell a partial bar from a final one, so the TTL
     governs every current-day cache. Historical requests always reuse the cache,
@@ -183,25 +162,17 @@ def _needs_same_day_refresh(data_file, curr_date_dt, today_date) -> bool:
 def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
     """Fetch OHLCV data with caching, filtered to prevent look-ahead bias.
 
-    Downloads 5 years of data up to today and caches per symbol. On
-    subsequent calls the cache is reused. Rows after curr_date are
-    filtered out so backtests never see future prices.
+    For A-stocks: routes to AKShare (Tencent data source).
+    Non-A-stock symbols are not supported.
     """
-    # Resolve broker/forex symbols (XAUUSD+ -> GC=F) to Yahoo's convention,
-    # then reject values that would escape the cache directory when
-    # interpolated into the cache filename (e.g. ``../../tmp/x``).
-    # For A-stocks: route to AKShare/东方财富 instead of Yahoo Finance.
-    # Suffix (.SH/.SZ/.BJ) is preserved as-is; AKShare strips it internally.
-    if _is_a_stock(symbol):
-        astock_symbol = symbol.upper()
-        safe_symbol = safe_ticker_component(symbol.lower())
-        canonical = None
-        is_astock = True
-    else:
-        canonical = normalize_symbol(symbol)
-        safe_symbol = safe_ticker_component(canonical)
-        astock_symbol = None
-        is_astock = False
+    if not _is_a_stock(symbol):
+        raise ValueError(
+            f"Symbol '{symbol}' is not a recognised A-stock (.SS/.SZ/.BJ). "
+            f"Only A-stocks are supported."
+        )
+
+    astock_symbol = symbol.upper()
+    safe_symbol = safe_ticker_component(symbol.lower())
 
     config = get_config()
     curr_date_dt = pd.to_datetime(curr_date)
@@ -210,15 +181,15 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
     today_date = pd.Timestamp.today()
     start_date = today_date - pd.DateOffset(years=5)
     start_str = start_date.strftime("%Y-%m-%d")
-    # yfinance ``end`` is EXCLUSIVE; request tomorrow so today's row is included
-    # when curr_date is the current day (#986). Look-ahead is still prevented by
-    # the curr_date filter below.
+    # Some data sources treat ``end`` as EXCLUSIVE; request tomorrow so today's
+    # row is included when curr_date is the current day (#986). Look-ahead is
+    # still prevented by the curr_date filter below.
     end_str = (today_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
     os.makedirs(config["data_cache_dir"], exist_ok=True)
     data_file = os.path.join(
         config["data_cache_dir"],
-        f"{safe_symbol}-YFin-data-{start_str}-{end_str}.csv",
+        f"{safe_symbol}-ohlcv-{start_str}-{end_str}.csv",
     )
 
     # A cached file may be empty if a prior fetch failed (unknown symbol,
@@ -237,32 +208,14 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
             data = cached
 
     if data is None:
-        if is_astock:
-            # A-stock: 优先走 AKShare/东方财富，绕过 Yahoo Finance
-            logger.info("A-stock %s → using AKShare", astock_symbol)
-            downloaded = _download_astock_ohlcv(astock_symbol, start_str, end_str)
-            downloaded = _ensure_date_column(downloaded)
-            # 只有真实数据才缓存
-            if not downloaded.empty and "Close" in downloaded.columns:
-                downloaded.to_csv(data_file, index=False, encoding="utf-8")
-            data = downloaded
-        else:
-            downloaded = yf_retry(lambda: yf.download(
-                canonical,
-                start=start_str,
-                end=end_str,
-                multi_level_index=False,
-                progress=False,
-                auto_adjust=True,
-            ))
-            downloaded = _ensure_date_column(downloaded.reset_index())
-            # Only cache real data — never persist an empty frame.
-            if downloaded.empty or "Close" not in downloaded.columns:
-                raise NoMarketDataError(
-                    symbol, canonical, "Yahoo Finance returned no rows"
-                )
+        # A-stock: 使用 AKShare (腾讯数据源)
+        logger.info("A-stock %s → using AKShare", astock_symbol)
+        downloaded = _download_astock_ohlcv(astock_symbol, start_str, end_str)
+        downloaded = _ensure_date_column(downloaded)
+        # 只有真实数据才缓存
+        if not downloaded.empty and "Close" in downloaded.columns:
             downloaded.to_csv(data_file, index=False, encoding="utf-8")
-            data = downloaded
+        data = downloaded
 
     data = _clean_dataframe(data)
 
@@ -271,7 +224,7 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
 
     # Reject a stale frame (latest row far older than curr_date) rather than
     # feeding year-old prices into indicators (#1021).
-    _assert_ohlcv_not_stale(data, curr_date, symbol, canonical if not is_astock else astock_symbol)
+    _assert_ohlcv_not_stale(data, curr_date, symbol, astock_symbol)
 
     return data
 
@@ -279,7 +232,7 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
 def filter_financials_by_date(data: pd.DataFrame, curr_date: str) -> pd.DataFrame:
     """Drop financial statement columns (fiscal period timestamps) after curr_date.
 
-    yfinance financial statements use fiscal period end dates as columns.
+    Financial statements use fiscal period end dates as columns.
     Columns after curr_date represent future data and are removed to
     prevent look-ahead bias.
     """
