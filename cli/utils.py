@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 import questionary
@@ -11,7 +12,7 @@ from tradingagents.llm_clients.model_catalog import get_model_options
 
 console = Console()
 
-TICKER_INPUT_EXAMPLES = "SPY, 0700.HK, BTC-USD"
+TICKER_INPUT_EXAMPLES = "688016, 000001, 600519, 贵州茅台, 平安银行"
 
 ANALYST_ORDER = [
     ("Market Analyst", AnalystType.MARKET),
@@ -24,28 +25,198 @@ CRYPTO_SUFFIXES = ("-USD", "-USDT", "-USDC", "-BTC", "-ETH")
 
 
 def is_valid_ticker_input(value: str) -> bool:
-    """Whether a ticker entry is acceptable (charset + length).
-
-    Allows the characters Yahoo symbols use, including ``=`` for futures/forex
-    like ``GC=F`` and ``EURUSD=X`` (#980), and ``^`` for indices. Empty input is
-    allowed (it defaults to SPY downstream).
-    """
+    """A 股输入允许纯数字代码、带后缀代码、或中文股票名称。"""
     v = value.strip()
-    return not v or (all(ch.isalnum() or ch in "._-^=" for ch in v) and len(v) <= 32)
+    if not v:
+        return True
+    # 允许中文
+    if any("\u4e00" <= ch <= "\u9fff" for ch in v):
+        return True
+    # 允许字母数字 + ._-^=
+    return all(ch.isalnum() or ch in "._-^=" for ch in v) and len(v) <= 32
+
+
+# ---- A 股代码 → 交易所后缀自动匹配 ----
+
+# A 股代码前缀规则
+_ASTOCK_SUFFIX_RULES: list[tuple[str, str]] = [
+    # (前缀匹配, 后缀)
+    ("688", ".SS"),   # 科创板 (上海)
+    ("689", ".SS"),
+    ("600", ".SS"),   # 上海主板
+    ("601", ".SS"),
+    ("603", ".SS"),
+    ("605", ".SS"),
+    ("000", ".SZ"),   # 深圳主板
+    ("001", ".SZ"),
+    ("002", ".SZ"),
+    ("003", ".SZ"),
+    ("300", ".SZ"),   # 创业板 (深圳)
+    ("301", ".SZ"),
+    ("430", ".BJ"),   # 北交所
+    ("830", ".BJ"),
+    ("831", ".BJ"),
+    ("832", ".BJ"),
+    ("833", ".BJ"),
+    ("834", ".BJ"),
+    ("835", ".BJ"),
+    ("836", ".BJ"),
+    ("837", ".BJ"),
+    ("838", ".BJ"),
+    ("839", ".BJ"),
+    ("920", ".BJ"),
+]
+
+
+def _auto_append_exchange(code: str) -> str:
+    """给 6 位 A 股代码自动补上正确的 .SS / .SZ / .BJ 后缀。
+
+    如果用户已经带了后缀但后缀与代码前缀不匹配（如 002032.sh→应为 SZ），
+    也会自动纠正为正确后缀。
+    """
+    code = code.strip().upper()
+    # 提取纯数字代码和用户指定的后缀
+    m = re.match(r"^[A-Z]*(\d{6})(?:\.([A-Z]+))?$", code)
+    if not m:
+        return code
+    pure = m.group(1)
+    user_suffix = m.group(2)
+
+    # 根据代码前缀确定正确后缀
+    correct_suffix = None
+    for prefix, suffix in _ASTOCK_SUFFIX_RULES:
+        if pure.startswith(prefix):
+            correct_suffix = suffix
+            break
+
+    if correct_suffix is None:
+        # 未知前缀，保留原样
+        return code
+
+    # 如果有用户后缀且不匹配 → 纠正
+    if user_suffix and user_suffix != correct_suffix.lstrip("."):
+        console.print(
+            f"[yellow]⚠ {pure}.{user_suffix} → 应为 {pure}{correct_suffix}，已自动纠正[/yellow]"
+        )
+
+    return f"{pure}{correct_suffix}"
+
+
+# ---- A 股名称 → 代码查询 (AKShare) ----
+
+_stock_name_cache: dict[str, str] | None = None
+
+
+def _load_stock_name_cache() -> dict[str, str]:
+    """懒加载 A 股名称→代码映射缓存。"""
+    global _stock_name_cache
+    if _stock_name_cache is not None:
+        return _stock_name_cache
+    try:
+        import akshare as ak
+        import os as _os
+
+        # 绕过代理（同 akshare_stock 逻辑）
+        _saved = {k: _os.environ.pop(k, None)
+                  for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
+                            "ALL_PROXY", "all_proxy")}
+        try:
+            df = ak.stock_info_a_code_name()
+            _stock_name_cache = {}
+            for _, row in df.iterrows():
+                code = str(row["code"]).strip()
+                name = str(row["name"]).strip()
+                _stock_name_cache[name] = code
+        finally:
+            for k, v in _saved.items():
+                if v is not None:
+                    _os.environ[k] = v
+
+        console.print(f"[dim]已加载 {len(_stock_name_cache)} 只 A 股名称映射[/dim]")
+    except Exception as e:
+        console.print(f"[yellow]股票名称查询不可用: {e}[/yellow]")
+        _stock_name_cache = {}
+    return _stock_name_cache
+
+
+def _resolve_by_name(name: str) -> str | None:
+    """通过股票名称（或部分名称）模糊查找代码。
+
+    返回 "600519.SS" 格式，未找到返回 None。
+    """
+    cache = _load_stock_name_cache()
+    if not cache:
+        return None
+
+    name = name.strip()
+    # 精确匹配
+    if name in cache:
+        code = cache[name]
+        return _auto_append_exchange(code)
+
+    # 模糊匹配
+    matches = [(c, n) for n, c in cache.items() if name in n]
+    if len(matches) == 1:
+        code = matches[0][0]
+        console.print(f"[dim]名称匹配: {matches[0][1]} → {code}[/dim]")
+        return _auto_append_exchange(code)
+    elif len(matches) > 1:
+        # 多个匹配，用 questionary 让用户选
+        console.print(f"[yellow]找到 {len(matches)} 个匹配，请选择:[/yellow]")
+        choice = questionary.select(
+            "请选择股票:",
+            choices=[questionary.Choice(f"{n} ({c})", value=c) for c, n in matches],
+        ).ask()
+        if choice:
+            return _auto_append_exchange(choice)
+        else:
+            return None
+
+    return None
+
+
+def normalize_ticker_symbol(ticker: str) -> str:
+    """解析用户输入为标准的 A 股 ticker 格式。
+
+    支持:
+    - 纯数字代码: "688016" → "688016.SS"
+    - 带后缀: "688016.SS" → "688016.SS"
+    - 中文名称: "贵州茅台" → "600519.SS"
+    - 带前导字母: "SH688016" → "688016.SS"
+    """
+    v = ticker.strip()
+
+    # 1. 中文 → 查名称表
+    if any("\u4e00" <= ch <= "\u9fff" for ch in v):
+        result = _resolve_by_name(v)
+        if result:
+            console.print(f"[green]✓ {v} → {result}[/green]")
+            return result
+        console.print(f"[red]未找到股票: {v}[/red]")
+        exit(1)
+
+    # 2. 纯数字或带前缀 → 自动补后缀
+    # 匹配格式: 纯数字(688016), 带后缀(688016.SS), 带前缀(SH688016), 带前后缀(SH688016.SS)
+    if re.match(r"^[A-Za-z]{0,4}(\d{4,6})(?:\.[A-Za-z]+)?$", v):
+        result = _auto_append_exchange(v)
+        if result != v:
+            console.print(f"[green]✓ {v} → {result}[/green]")
+        return result
+
+    # 3. 其他（美股/港股等）原样通过
+    return v.upper()
 
 
 def get_ticker() -> str:
-    """Prompt the user to enter a ticker symbol, preserving exchange suffixes.
+    """提示用户输入 A 股代码或名称，自动补全交易所后缀。
 
-    Uses questionary.text (not typer.prompt, which strips trailing dot-suffixes
-    like ``000404.SH`` on some shells) and validates the symbol charset so an
-    obvious typo is caught before the run starts.
+    支持: 纯数字代码 (688016)、带后缀 (688016.SS)、中文名称 (贵州茅台)。
     """
     ticker = questionary.text(
-        f"Enter ticker symbol (e.g. {TICKER_INPUT_EXAMPLES}):",
+        f"输入 A 股代码或名称 (如 {TICKER_INPUT_EXAMPLES}):",
         validate=lambda x: (
             is_valid_ticker_input(x)
-            or "Please enter a valid ticker symbol, e.g. AAPL, 000404.SZ, 0700.HK, GC=F."
+            or "请输入有效的 A 股代码（6位数字）或股票名称，如 688016、贵州茅台"
         ),
         style=questionary.Style(
             [
@@ -56,26 +227,10 @@ def get_ticker() -> str:
     ).ask()
 
     if ticker is None:
-        console.print("\n[red]No ticker symbol provided. Exiting...[/red]")
+        console.print("\n[red]未输入股票代码，退出...[/red]")
         exit(1)
 
-    return normalize_ticker_symbol(ticker) if ticker.strip() else "SPY"
-
-
-def normalize_ticker_symbol(ticker: str) -> str:
-    """Resolve user input to its canonical Yahoo symbol (single source of truth).
-
-    Delegates to the data layer's ``normalize_symbol`` so the symbol the CLI
-    passes through the pipeline is exactly the one the data path will price
-    (e.g. ``BTCUSD`` -> ``BTC-USD``, ``XAUUSD`` -> ``GC=F``). Falls back to the
-    plain upper-case if the data layer is unavailable.
-    """
-    try:
-        from tradingagents.dataflows.symbol_utils import normalize_symbol
-
-        return normalize_symbol(ticker)
-    except Exception:
-        return ticker.strip().upper()
+    return normalize_ticker_symbol(ticker) if ticker.strip() else ""
 
 
 def detect_asset_type(ticker: str) -> AssetType:
@@ -114,9 +269,9 @@ def get_analysis_date() -> str:
             return False
 
     date = questionary.text(
-        "Enter the analysis date (YYYY-MM-DD):",
+        "输入分析日期 (YYYY-MM-DD):",
         validate=lambda x: validate_date(x.strip())
-        or "Please enter a valid date in YYYY-MM-DD format.",
+        or "请输入有效日期，格式为 YYYY-MM-DD。",
         style=questionary.Style(
             [
                 ("text", "fg:green"),
@@ -126,7 +281,7 @@ def get_analysis_date() -> str:
     ).ask()
 
     if not date:
-        console.print("\n[red]No date provided. Exiting...[/red]")
+        console.print("\n[red]未输入日期，退出...[/red]")
         exit(1)
 
     return date.strip()

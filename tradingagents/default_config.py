@@ -114,11 +114,11 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # Search queries used by get_global_news for macro headlines. Extend or
     # replace to broaden geographic / sector coverage.
     "global_news_queries": [
-        "Federal Reserve interest rates inflation",
-        "S&P 500 earnings GDP economic outlook",
-        "geopolitical risk trade war sanctions",
-        "ECB Bank of England BOJ central bank policy",
-        "oil commodities supply chain energy",
+        "央行 利率 LPR 降息 货币政策",
+        "GDP 经济数据 进出口 社融 M2",
+        "地缘政治 中美贸易 关税",
+        "A股 板块轮动 市场热点",
+        "大宗商品 能源 原油 黄金",
     ],
     # Data vendor configuration
     # Category-level configuration (default for all tools in category).
@@ -126,12 +126,12 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # routed to vendors you didn't choose. For ordered fallback, list several,
     # e.g. "yfinance,alpha_vantage". "default" uses all available vendors.
     "data_vendors": {
-        "core_stock_apis": "yfinance",       # Options: alpha_vantage, yfinance
-        "technical_indicators": "yfinance",  # Options: alpha_vantage, yfinance
-        "fundamental_data": "yfinance",      # Options: alpha_vantage, yfinance
-        "news_data": "yfinance",             # Options: alpha_vantage, yfinance
-        "macro_data": "fred",                # Options: fred (needs FRED_API_KEY)
-        "prediction_markets": "polymarket",  # Options: polymarket (keyless)
+        "core_stock_apis": "akshare",              # AKShare (东方财富) — A股优先
+        "technical_indicators": "akshare",         # AKShare — A股优先
+        "fundamental_data": "akshare",             # AKShare — A股优先
+        "news_data": "akshare",                    # AKShare 国内新闻（东方财富+同花顺+新浪）
+        "macro_data": "akshare",                   # AKShare 中国宏观数据（LPR/PMI/CPI等）
+        "prediction_markets": "",                  # 中国无对应平台，已禁用
     },
     # Tool-level configuration (takes precedence over category-level)
     "tool_vendors": {

@@ -1,27 +1,13 @@
-"""Sentiment analyst — multi-source sentiment analysis for a target ticker.
+"""Sentiment analyst — 多源情绪分析（A股适配版）。
 
-Previously named ``social_media_analyst``. Renamed and redesigned because
-the old version had a prompt that demanded social-media analysis but the
-only tool available was Yahoo Finance news — which led LLMs to fabricate
-Reddit/X/StockTwits content under prompt pressure (verified live).
+聚合五个互补数据来源，覆盖机构研报、个股新闻、实时快讯：
+  1. Yahoo Finance 新闻          — 国际机构视角
+  2. 东方财富个股新闻 (stock_news_em)           — 该股票直接相关新闻
+  3. 东方财富券商研报 (stock_research_report_em) — 机构评级+盈利预测
+  4. 同花顺全球快讯 (stock_info_global_ths)      — 实时财经快讯
+  5. 新浪财经新闻   (stock_info_global_sina)      — 实时滚动新闻
 
-The redesigned agent pre-fetches three complementary data sources before
-the LLM is invoked and injects them into the prompt as structured blocks:
-
-  1. News headlines     — Yahoo Finance (institutional framing)
-  2. StockTwits messages — retail-trader posts indexed by cashtag, with
-                           user-labeled Bullish/Bearish sentiment tags
-  3. Reddit posts        — r/wallstreetbets, r/stocks, r/investing
-
-The agent does not use tool-calling; the data is in the prompt from
-turn 0. Output uses the structured-output pattern (json_schema for
-OpenAI/xAI, response_schema for Gemini, tool-use for Anthropic), falling
-back to free-text generation for providers that lack native support, so
-the sentiment header (band + score + confidence) is deterministic across
-runs and providers instead of free-form per-model prose.
-
-See: https://github.com/TauricResearch/TradingAgents/issues/557
-See: https://github.com/TauricResearch/TradingAgents/issues/796
+数据在 LLM 调用前预取并注入 prompt，无需 Tool Call。
 """
 
 from datetime import datetime, timedelta
@@ -39,8 +25,13 @@ from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext,
 )
-from tradingagents.dataflows.reddit import fetch_reddit_posts
-from tradingagents.dataflows.stocktwits import fetch_stocktwits_messages
+from tradingagents.dataflows.cn_news import (
+    fetch_all_cn_news,
+    fetch_eastmoney_news,
+    fetch_eastmoney_reports,
+    fetch_sina_news,
+    fetch_ths_news,
+)
 
 
 def _seven_days_back(trade_date: str) -> str:
@@ -50,10 +41,9 @@ def _seven_days_back(trade_date: str) -> str:
 def create_sentiment_analyst(llm):
     """Create a sentiment analyst node for the trading graph.
 
-    Pre-fetches news + StockTwits + Reddit data, injects them into the
-    prompt as structured blocks, and produces a deterministic sentiment
-    report via structured output (with a free-text fallback for providers
-    that do not support it).
+    Pre-fetches Yahoo Finance + 4 domestic Chinese news sources, injects
+    them into the prompt as structured blocks, and produces a deterministic
+    sentiment report via structured output (with a free-text fallback).
     """
     structured_llm = bind_structured(llm, SentimentReport, "Sentiment Analyst")
 
@@ -63,20 +53,22 @@ def create_sentiment_analyst(llm):
         start_date = _seven_days_back(end_date)
         instrument_context = get_instrument_context_from_state(state)
 
-        # Pre-fetch all three sources. Each fetcher degrades gracefully and
-        # returns a string (no exceptions surface from here), so the LLM
-        # always sees something — either real data or a clear placeholder.
-        news_block = get_news.func(ticker, start_date, end_date)
-        stocktwits_block = fetch_stocktwits_messages(ticker, limit=30)
-        reddit_block = fetch_reddit_posts(ticker)
+        # 预取所有数据源
+        yahoo_block = get_news.func(ticker, start_date, end_date)
+        em_news = fetch_eastmoney_news(ticker, limit=15)
+        em_reports = fetch_eastmoney_reports(ticker, limit=10)
+        ths_block = fetch_ths_news(limit=15)
+        sina_block = fetch_sina_news(limit=15)
 
         system_message = _build_system_message(
             ticker=ticker,
             start_date=start_date,
             end_date=end_date,
-            news_block=news_block,
-            stocktwits_block=stocktwits_block,
-            reddit_block=reddit_block,
+            yahoo_block=yahoo_block,
+            em_news=em_news,
+            em_reports=em_reports,
+            ths_block=ths_block,
+            sina_block=sina_block,
         )
 
         prompt = ChatPromptTemplate.from_messages(
@@ -97,9 +89,6 @@ def create_sentiment_analyst(llm):
         prompt = prompt.partial(current_date=end_date)
         prompt = prompt.partial(instrument_context=instrument_context)
 
-        # Format the template into a concrete message list so the structured
-        # and free-text paths receive the same input. No bind_tools — the
-        # data is already in the prompt.
         formatted_messages = prompt.format_messages(messages=state["messages"])
 
         report_text = invoke_structured_or_freetext(
@@ -118,87 +107,108 @@ def create_sentiment_analyst(llm):
     return sentiment_analyst_node
 
 
+# ---------------------------------------------------------------------------
+# Legacy backwards-compatibility shim for xueqiu.py
+# ---------------------------------------------------------------------------
+def _make_compat_fetch_xueqiu():
+    """Return a callable for old code that still imports fetch_xueqiu_posts."""
+    from tradingagents.dataflows.cn_news import fetch_eastmoney_news as _em
+    return lambda ticker, limit=20, timeout=10.0: _em(ticker, limit)
+
+
+def _make_compat_fetch_guba():
+    """Return a callable for old code that still imports fetch_guba_posts."""
+    from tradingagents.dataflows.cn_news import fetch_eastmoney_reports as _er
+    return lambda ticker, limit=20, timeout=10.0: _er(ticker, limit)
+
+
 def _build_system_message(
     *,
     ticker: str,
     start_date: str,
     end_date: str,
-    news_block: str,
-    stocktwits_block: str,
-    reddit_block: str,
+    yahoo_block: str,
+    em_news: str,
+    em_reports: str,
+    ths_block: str,
+    sina_block: str,
 ) -> str:
-    """Assemble the sentiment-analyst system message with structured data blocks."""
-    return f"""You are a financial market sentiment analyst. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}, drawing on three complementary data sources that have already been collected for you.
+    """组装情绪分析师的 system prompt（A股版，5 数据源）。"""
+    return f"""你是一位 A 股市场情绪分析师。请对 {ticker} 在 {start_date} 至 {end_date} 期间的市场情绪做出综合分析报告。以下五个互补数据源已为你预取完毕：
 
-## Data sources (pre-fetched, in this prompt)
+## 数据源
 
-### News headlines — Yahoo Finance, past 7 days
-Institutional framing. Fact-driven, slower-moving signal.
+### 1. Yahoo Finance 新闻（英文，近 7 天）
+国际机构视角信息，事实导向，信号较慢。
 
-<start_of_news>
-{news_block}
-<end_of_news>
+<start_of_yahoo>
+{yahoo_block}
+<end_of_yahoo>
 
-### StockTwits messages — retail-trader social platform indexed by cashtag
-Fast-moving signal. Each message carries a user-labeled sentiment tag (Bullish / Bearish / no-label) plus the message body.
+### 2. 东方财富个股新闻
+该股票直接相关的 A 股新闻，每条新闻带 [偏多]/[偏空] 情感标签。
 
-<start_of_stocktwits>
-{stocktwits_block}
-<end_of_stocktwits>
+<start_of_em_news>
+{em_news}
+<end_of_em_news>
 
-### Reddit posts — r/wallstreetbets, r/stocks, r/investing (past 7 days)
-Community discussion. Engagement signal via upvote score and comment count. Subreddit character matters (r/wallstreetbets is often contrarian/exuberant; r/stocks more measured; r/investing longer-term).
+### 3. 东方财富券商研报
+国内券商对该股票的研究报告，包含评级（买入/增持/减持/卖出）和盈利预测数据（EPS/PE），反映专业机构观点。
 
-<start_of_reddit>
-{reddit_block}
-<end_of_reddit>
+<start_of_em_reports>
+{em_reports}
+<end_of_em_reports>
 
-## How to analyze this data (best practices)
+### 4. 同花顺财经快讯（10jqka.com.cn）
+实时滚动财经快讯，覆盖 A 股、宏观、行业、国际等最新消息。
 
-1. **Read the StockTwits Bullish/Bearish ratio as a leading retail-sentiment signal.** A 70/30 bullish/bearish split is moderately bullish; ≥90/10 may indicate over-extension and contrarian risk; 50/50 is uncertainty. Sample size matters — base rates on the actual message count, not percentages alone.
+<start_of_ths>
+{ths_block}
+<end_of_ths>
 
-2. **Look for cross-source divergences.** If news framing is bearish but StockTwits is overwhelmingly bullish, that mismatch is itself a signal — it can mean retail is leaning into a thesis the news flow hasn't caught up to (or vice versa, that retail is chasing while institutions are cautious).
+### 5. 新浪财经新闻
+新浪实时财经新闻流，包含政策、公司公告、行业动态等。
 
-3. **Weight Reddit posts by engagement.** A 400-upvote / 200-comment thread reflects community attention; a 3-upvote post is noise. Read the body excerpts for context — the title alone often misleads.
+<start_of_sina>
+{sina_block}
+<end_of_sina>
 
-4. **Distinguish opinion from event.** A news headline ("Nvidia announces $500M Corning deal") is an event; a StockTwits post ("buying NVDA, this is going to moon") is opinion. Both are inputs but should be weighted differently in your conclusions.
+## 分析方法（最佳实践）
 
-5. **Identify recurring narrative themes.** What topic keeps coming up across sources? That's the dominant narrative driving current sentiment.
+1. **券商研报是最专业的信号来源。** 评级为"买入"/"增持"且多家机构一致看多 = 机构共识强；出现"减持"/"卖出"评级需高度警惕。
 
-6. **Be honest about data limits.** If StockTwits returned only a handful of messages, or one or more sources returned an "<unavailable>" placeholder, the sentiment read is less robust — flag this explicitly in the `confidence` field and the narrative. If the sources are silent on a given subreddit, say so.
+2. **新闻偏多/偏空比辅助情绪判断。** 偏多新闻占比 >70% 为积极信号；偏空为主需警惕。
 
-7. **Identify catalysts and risks** that emerge across sources — news of upcoming earnings, product launches, competitive threats, macro headlines, etc.
+3. **寻找跨来源分歧。** 如果 Yahoo Finance 偏空但国内券商评级持续买入，这种中外视角背离本身就是信号。
 
-8. **Past sentiment is not predictive.** Frame your conclusions as signal for the trader to weigh alongside fundamentals and technicals, not as a price call.
+4. **同花顺/新浪快讯提供实时催化剂。** 注意是否有行业政策、公司公告、大单交易等突发事件。
 
-## Output fields
+5. **盈利预测是关键硬数据。** 研报中的 EPS/PE 预测如果持续上调 = 基本面改善信号；持续下调 = 基本面恶化。
 
-Fill the following fields:
+6. **区分观点与事件。** 新闻标题是事件，研报评级是专业观点，两者权重不同。
 
-- **overall_band**: Exactly one of Bullish / Mildly Bullish / Neutral / Mixed / Mildly Bearish / Bearish. Use Mixed when sources point in clearly different directions; Neutral only when all sources are genuinely silent.
-- **overall_score**: A number from 0 (maximally bearish) to 10 (maximally bullish); 5 is neutral. Keep it consistent with overall_band.
-- **confidence**: low / medium / high, based on data quality and sample size.
-- **narrative**: Full source-by-source breakdown, divergences, dominant narrative themes, catalysts and risks, and a markdown summary table of key sentiment signals (direction, source, supporting evidence).
+7. **坦诚数据局限性。** 当某个来源只返回少量内容或"<不可用>"占位符时，情绪判断力度要打折扣。
+
+8. **历史情绪不预测未来。** 将你的结论作为信号供交易员结合基本面和技术面综合参考。
+
+## 输出字段
+
+- **overall_band**: 看涨 / 温和看涨 / 中性 / 分歧 / 温和看跌 / 看跌。当来源指向明显不同方向时用"分歧"。
+- **overall_score**: 0（极度看跌）到 10（极度看涨）；5 为中性。
+- **confidence**: 低 / 中 / 高，基于数据质量和样本量。
+- **narrative**: 逐源详细分析、跨源背离、主导情绪主题、催化剂和风险、关键情绪信号汇总表。
 
 {get_language_instruction()}"""
 
 
 # ---------------------------------------------------------------------------
-# Backwards-compatibility shim
+# Backwards-compatibility shim for social_media_analyst
 # ---------------------------------------------------------------------------
 def create_social_media_analyst(llm):
-    """Deprecated alias for :func:`create_sentiment_analyst`.
-
-    Kept so existing code that imports ``create_social_media_analyst``
-    continues to work.
-
-    .. deprecated::
-        Import :func:`create_sentiment_analyst` directly instead.
-    """
+    """Deprecated alias for :func:`create_sentiment_analyst`. """
     import warnings
     warnings.warn(
-        "create_social_media_analyst is deprecated and will be removed in a "
-        "future version. Use create_sentiment_analyst instead.",
+        "create_social_media_analyst is deprecated. Use create_sentiment_analyst instead.",
         DeprecationWarning,
         stacklevel=2,
     )

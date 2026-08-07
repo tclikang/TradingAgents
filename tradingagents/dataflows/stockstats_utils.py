@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 # enough to catch the year-old frames yfinance occasionally returns (#1021).
 MAX_OHLCV_STALE_DAYS = 10
 
+# A-stock suffixes that should use AKShare instead of Yahoo Finance
+_ASTOCK_SUFFIXES = frozenset({".SS", ".SZ", ".SH", ".BJ"})
+
 
 def yf_retry(func, max_retries=3, base_delay=2.0):
     """Execute a yfinance call with exponential backoff on rate limits.
@@ -122,6 +125,37 @@ def _assert_ohlcv_not_stale(
         )
 
 
+def _is_a_stock(symbol: str) -> bool:
+    """Check if a symbol is an A-stock that should use AKShare.
+
+    Shanghai: 6xxxxx.SH (主板) / 688xxx.SH (科创板)
+    Shenzhen: 0xxxxx.SZ (主板) / 3xxxxx.SZ (创业板)
+    Beijing:  8xxxxx.BJ (北交所)
+    """
+    upper = symbol.upper()
+    return any(upper.endswith(suf) for suf in _ASTOCK_SUFFIXES)
+
+
+def _download_astock_ohlcv(symbol: str, start_str: str, end_str: str) -> pd.DataFrame:
+    """Download A-stock OHLCV via AKShare/东方财富 (no Yahoo Finance)."""
+    from .interface import route_to_vendor
+    csv_str = route_to_vendor("get_stock_data", symbol, start_str, end_str)
+
+    # Check for NO_DATA_AVAILABLE sentinel (returned by route_to_vendor when all vendors fail)
+    if csv_str.startswith("NO_DATA_AVAILABLE"):
+        raise NoMarketDataError(symbol, symbol, csv_str)
+
+    import io
+    lines = csv_str.split("\n")
+    data_lines = [l for l in lines if not l.startswith("#") and l.strip()]
+    if not data_lines:
+        raise NoMarketDataError(symbol, symbol, "AKShare 返回空 OHLCV 数据")
+    df = pd.read_csv(io.StringIO("\n".join(data_lines)))
+    if df.empty or "Close" not in df.columns:
+        raise NoMarketDataError(symbol, symbol, "AKShare 返回不可用的 OHLCV 数据")
+    return df
+
+
 def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
     """Fetch OHLCV data with caching, filtered to prevent look-ahead bias.
 
@@ -132,8 +166,18 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
     # Resolve broker/forex symbols (XAUUSD+ -> GC=F) to Yahoo's convention,
     # then reject values that would escape the cache directory when
     # interpolated into the cache filename (e.g. ``../../tmp/x``).
-    canonical = normalize_symbol(symbol)
-    safe_symbol = safe_ticker_component(canonical)
+    # For A-stocks: route to AKShare/东方财富 instead of Yahoo Finance.
+    # Suffix (.SH/.SZ/.BJ) is preserved as-is; AKShare strips it internally.
+    if _is_a_stock(symbol):
+        astock_symbol = symbol.upper()
+        safe_symbol = safe_ticker_component(symbol.lower())
+        canonical = None
+        is_astock = True
+    else:
+        canonical = normalize_symbol(symbol)
+        safe_symbol = safe_ticker_component(canonical)
+        astock_symbol = None
+        is_astock = False
 
     config = get_config()
     curr_date_dt = pd.to_datetime(curr_date)
@@ -163,22 +207,32 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
             data = cached
 
     if data is None:
-        downloaded = yf_retry(lambda: yf.download(
-            canonical,
-            start=start_str,
-            end=end_str,
-            multi_level_index=False,
-            progress=False,
-            auto_adjust=True,
-        ))
-        downloaded = _ensure_date_column(downloaded.reset_index())
-        # Only cache real data — never persist an empty frame.
-        if downloaded.empty or "Close" not in downloaded.columns:
-            raise NoMarketDataError(
-                symbol, canonical, "Yahoo Finance returned no rows"
-            )
-        downloaded.to_csv(data_file, index=False, encoding="utf-8")
-        data = downloaded
+        if is_astock:
+            # A-stock: 优先走 AKShare/东方财富，绕过 Yahoo Finance
+            logger.info("A-stock %s → using AKShare", astock_symbol)
+            downloaded = _download_astock_ohlcv(astock_symbol, start_str, end_str)
+            downloaded = _ensure_date_column(downloaded)
+            # 只有真实数据才缓存
+            if not downloaded.empty and "Close" in downloaded.columns:
+                downloaded.to_csv(data_file, index=False, encoding="utf-8")
+            data = downloaded
+        else:
+            downloaded = yf_retry(lambda: yf.download(
+                canonical,
+                start=start_str,
+                end=end_str,
+                multi_level_index=False,
+                progress=False,
+                auto_adjust=True,
+            ))
+            downloaded = _ensure_date_column(downloaded.reset_index())
+            # Only cache real data — never persist an empty frame.
+            if downloaded.empty or "Close" not in downloaded.columns:
+                raise NoMarketDataError(
+                    symbol, canonical, "Yahoo Finance returned no rows"
+                )
+            downloaded.to_csv(data_file, index=False, encoding="utf-8")
+            data = downloaded
 
     data = _clean_dataframe(data)
 
@@ -187,7 +241,7 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
 
     # Reject a stale frame (latest row far older than curr_date) rather than
     # feeding year-old prices into indicators (#1021).
-    _assert_ohlcv_not_stale(data, curr_date, symbol, canonical)
+    _assert_ohlcv_not_stale(data, curr_date, symbol, canonical if not is_astock else astock_symbol)
 
     return data
 

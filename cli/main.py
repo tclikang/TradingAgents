@@ -532,12 +532,12 @@ def get_user_selections():
         console.print(create_question_box(box_title, box_body))
         return prompt_fn()
 
-    # Step 1: Ticker symbol
+    # Step 1: A 股代码
     console.print(
         create_question_box(
-            "Step 1: Ticker Symbol",
-            "Enter the ticker, with exchange suffix when needed (e.g. SPY, 0700.HK, BTC-USD)",
-            "SPY",
+            "Step 1: A 股代码或名称",
+            "支持: 纯数字代码（如 688016）、中文名称（如 贵州茅台）、或带后缀（如 688016.SS）",
+            "",
         )
     )
     selected_ticker = get_ticker()
@@ -549,12 +549,12 @@ def get_user_selections():
             f"[green]Detected asset type:[/green] {asset_type.value}"
         )
 
-    # Step 2: Analysis date
+    # Step 2: 分析日期
     default_date = datetime.datetime.now().strftime("%Y-%m-%d")
     console.print(
         create_question_box(
-            "Step 2: Analysis Date",
-            "Enter the analysis date (YYYY-MM-DD)",
+            "Step 2: 分析日期",
+            "输入分析日期 (YYYY-MM-DD)",
             default_date,
         )
     )
@@ -569,16 +569,16 @@ def get_user_selections():
     else:
         console.print(
             create_question_box(
-                "Step 3: Output Language",
+                "Step 3: 输出语言",
                 "Select the language for analyst reports and final decision"
             )
         )
         output_language = ask_output_language()
 
-    # Step 4: Select analysts
+    # Step 4: 分析团队
     console.print(
         create_question_box(
-            "Step 4: Analysts Team", "Select your LLM analyst agents for the analysis"
+            "Step 4: 分析团队", "选择 AI 分析师团队"
         )
     )
     selected_analysts = select_analysts(asset_type)
