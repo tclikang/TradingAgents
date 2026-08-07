@@ -200,7 +200,8 @@ def get_stock_stats_indicators_window(
 ) -> str:
     """通过 stockstats 从 AKShare OHLCV 数据计算技术指标。
 
-    用法与 y_finance.get_stock_stats_indicators_window 完全一致。
+    使用 load_ohlcv 拉取 5 年数据确保长期指标（如 200 SMA）计算准确，
+    look_back_days 仅控制输出显示范围。
     """
     from stockstats import wrap
 
@@ -229,35 +230,19 @@ def get_stock_stats_indicators_window(
     curr_date_dt = datetime.strptime(curr_date, "%Y-%m-%d")
     before = curr_date_dt - relativedelta(days=look_back_days)
 
-    # 获取 OHLCV 并计算指标（腾讯数据源，通过代理可达）
-    tx_symbol = _as_tx_symbol(symbol)
-    start = _date_to_akshare(before.strftime("%Y-%m-%d"))
-    end = _date_to_akshare(curr_date)
+    # 使用 load_ohlcv 拉取 5 年数据（缓存），确保长期指标计算准确
+    # look_back_days 仅控制输出范围，不影响数据拉取窗口
+    from .stockstats_utils import load_ohlcv
 
     try:
-        import akshare as ak
-    except ImportError:
-        raise VendorNotConfiguredError("AKShare 未安装")
-
-    try:
-        raw = ak.stock_zh_a_hist_tx(
-            symbol=tx_symbol,
-            start_date=start, end_date=end, adjust="qfq",
-        )
+        data = load_ohlcv(symbol, curr_date)
+    except NoMarketDataError:
+        raise
     except Exception as e:
-        raise NoMarketDataError(symbol, tx_symbol, f"AKShare(腾讯) 技术指标数据获取失败: {e}") from e
+        raise NoMarketDataError(symbol, symbol, f"OHLCV 数据加载失败: {e}") from e
 
-    if raw is None or raw.empty:
-        raise NoMarketDataError(symbol, tx_symbol, "AKShare(腾讯) 返回空数据")
-
-    # 映射列名供 stockstats 使用（腾讯数据源返回小写英文列名）
-    col_map = {"date": "Date", "open": "Open", "close": "Close",
-               "high": "High", "low": "Low", "volume": "Volume"}
-    data = raw.rename(columns={k: v for k, v in col_map.items() if k in raw.columns})
-    data["Date"] = pd.to_datetime(data["Date"], errors="coerce")
-    data = data.dropna(subset=["Date", "Close"])
-    if data.empty:
-        raise NoMarketDataError(symbol, tx_symbol, "AKShare 数据经清洗后为空")
+    if data is None or data.empty:
+        raise NoMarketDataError(symbol, symbol, "OHLCV 数据为空")
 
     df = wrap(data)
     df["Date"] = df["Date"].dt.strftime("%Y-%m-%d")

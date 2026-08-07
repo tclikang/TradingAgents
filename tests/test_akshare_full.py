@@ -567,13 +567,13 @@ class TestCnNewsComponents(unittest.TestCase):
 @pytest.mark.unit
 class TestProxyBypass(unittest.TestCase):
     def test_bypass_context_manager_works(self):
-        """_akshare_bypass 应正常进入和退出，不改变环境变量。"""
+        """_akshare_bypass 应正常进入和退出，恢复环境变量。"""
         os.environ["HTTP_PROXY"] = "http://test.proxy:8080"
         try:
             with akshare_stock._akshare_bypass():
-                # env var should still be present
-                self.assertIn("HTTP_PROXY", os.environ)
-            # 退出后仍应存在
+                # bypass 内部会弹出代理环境变量（强制直连），所以不应存在
+                self.assertNotIn("HTTP_PROXY", os.environ)
+            # 退出后应恢复
             self.assertEqual(os.environ.get("HTTP_PROXY"), "http://test.proxy:8080")
         finally:
             os.environ.pop("HTTP_PROXY", None)
