@@ -18,7 +18,6 @@ from tradingagents.agents.utils.agent_utils import (
     get_global_news,
     get_income_statement,
     get_indicators,
-    get_insider_transactions,
     get_macro_indicators,
     get_news,
     get_stock_data,
@@ -206,10 +205,9 @@ class TradingAgentsGraph:
             ),
             "news": ToolNode(
                 [
-                    # News and insider information
+                    # News and macroeconomic data
                     get_news,
                     get_global_news,
-                    get_insider_transactions,
                     get_macro_indicators,
                 ]
             ),

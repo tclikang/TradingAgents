@@ -31,7 +31,6 @@ dependencies = [
     "stockstats>=0.6.5",
     "tqdm>=4.67.1",
     "typing-extensions>=4.14.0",
-    "yfinance>=1.4.1",
 ]
 
 [project.optional-dependencies]
@@ -62,6 +61,7 @@ markers = [
     "unit: fast isolated unit tests",
     "integration: tests requiring external services",
     "smoke: quick sanity-check tests",
+    "network: tests that require internet connectivity to Chinese data sources",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",

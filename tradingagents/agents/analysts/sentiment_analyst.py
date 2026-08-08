@@ -1,11 +1,15 @@
-"""Sentiment analyst — 多源情绪分析（A股适配版）。
+"""Sentiment analyst — 多源情绪分析（A股多源冗余版）。
 
-聚合四个互补数据来源，覆盖机构研报、个股新闻、实时快讯：
-  1. 东方财富个股新闻 (stock_news_em)           — 该股票直接相关新闻
-  2. 东方财富券商研报 (stock_research_report_em) — 机构评级+盈利预测
-  3. 同花顺全球快讯 (stock_info_global_ths)      — 实时财经快讯
-  4. 新浪财经新闻   (stock_info_global_sina)      — 实时滚动新闻
+聚合七个互补数据来源，覆盖机构研报、个股新闻、实时快讯、公司公告：
+  1. 东方财富个股新闻 (stock_news_em)               — 该股票直接相关新闻
+  2. 东方财富券商研报 (stock_research_report_em)     — 机构评级+盈利预测
+  3. 同花顺全球快讯 (stock_info_global_ths)          — 实时财经快讯（主源）
+  4. 新浪财经新闻   (stock_info_global_sina)          — 实时滚动新闻（主源）
+  5. 东方财富要闻   (stock_news_main_em)             — 要闻备源
+  6. 东方财富全球快讯(stock_info_global_em)          — 全球备源
+  7. 巨潮资讯公告   (stock_notice_report)             — 公司公告补充
 
+每个新闻源的 fetch 函数内置 failover 链（主源→备源→降级）。
 数据在 LLM 调用前预取并注入 prompt，无需 Tool Call。
 """
 
@@ -26,6 +30,9 @@ from tradingagents.agents.utils.structured import (
 )
 from tradingagents.dataflows.cn_news import (
     fetch_all_cn_news,
+    fetch_cninfo_notices,
+    fetch_eastmoney_global,
+    fetch_eastmoney_headlines,
     fetch_eastmoney_news,
     fetch_eastmoney_reports,
     fetch_sina_news,
@@ -52,11 +59,14 @@ def create_sentiment_analyst(llm):
         start_date = _seven_days_back(end_date)
         instrument_context = get_instrument_context_from_state(state)
 
-        # 预取所有数据源
+        # 预取所有数据源（7 个维度，每个内置 failover）
         em_news = fetch_eastmoney_news(ticker, limit=15)
         em_reports = fetch_eastmoney_reports(ticker, limit=10)
         ths_block = fetch_ths_news(limit=15)
         sina_block = fetch_sina_news(limit=15)
+        em_headlines = fetch_eastmoney_headlines(limit=10)
+        em_global = fetch_eastmoney_global(limit=10)
+        cninfo = fetch_cninfo_notices(ticker, limit=5)
 
         system_message = _build_system_message(
             ticker=ticker,
@@ -66,6 +76,9 @@ def create_sentiment_analyst(llm):
             em_reports=em_reports,
             ths_block=ths_block,
             sina_block=sina_block,
+            em_headlines=em_headlines,
+            em_global=em_global,
+            cninfo=cninfo,
         )
 
         prompt = ChatPromptTemplate.from_messages(
@@ -132,9 +145,12 @@ def _build_system_message(
     em_reports: str,
     ths_block: str,
     sina_block: str,
+    em_headlines: str,
+    em_global: str,
+    cninfo: str,
 ) -> str:
-    """组装情绪分析师的 system prompt（A股版，4 数据源）。"""
-    return f"""你是一位 A 股市场情绪分析师。请对 {ticker} 在 {start_date} 至 {end_date} 期间的市场情绪做出综合分析报告。以下四个互补数据源已为你预取完毕：
+    """组装情绪分析师的 system prompt（A股版，7 数据源）。"""
+    return f"""你是一位 A 股市场情绪分析师。请对 {ticker} 在 {start_date} 至 {end_date} 期间的市场情绪做出综合分析报告。以下七个互补数据源已为你预取完毕：
 
 ## 数据源
 
@@ -166,6 +182,27 @@ def _build_system_message(
 {sina_block}
 <end_of_sina>
 
+### 5. 东方财富要闻（备源）
+东方财富头条要闻，作为同花顺和新浪的后备补充源。
+
+<start_of_em_headlines>
+{em_headlines}
+<end_of_em_headlines>
+
+### 6. 东方财富全球快讯（备源）
+东方财富全球财经快讯，覆盖国际市场和跨境动态。
+
+<start_of_em_global>
+{em_global}
+<end_of_em_global>
+
+### 7. 巨潮资讯网公告
+公司官方公告（董事会决议、业绩预告、重大合同等），是监管机构和上交所指定的法定披露平台。
+
+<start_of_cninfo>
+{cninfo}
+<end_of_cninfo>
+
 ## 分析方法（最佳实践）
 
 1. **券商研报是最专业的信号来源。** 评级为"买入"/"增持"且多家机构一致看多 = 机构共识强；出现"减持"/"卖出"评级需高度警惕。
@@ -176,11 +213,15 @@ def _build_system_message(
 
 4. **盈利预测是关键硬数据。** 研报中的 EPS/PE 预测如果持续上调 = 基本面改善信号；持续下调 = 基本面恶化。
 
-5. **区分观点与事件。** 新闻标题是事件，研报评级是专业观点，两者权重不同。
+5. **巨潮资讯公告是法定披露。** 若公告中出现"业绩预警""重大合同""减持计划"等字样，权重高于其他源。
 
-6. **坦诚数据局限性。** 当某个来源只返回少量内容或"<不可用>"占位符时，情绪判断力度要打折扣。
+6. **多源交叉验证。** 当同花顺和新浪都报道同一事件，可靠性提升；当单一来源报到而其他源沉默，打折扣。
 
-7. **历史情绪不预测未来。** 将你的结论作为信号供交易员结合基本面和技术面综合参考。
+7. **区分观点与事件。** 新闻标题是事件，研报评级是专业观点，两者权重不同。
+
+8. **坦诚数据局限性。** 当某个来源只返回少量内容或"<不可用>"占位符时，情绪判断力度要打折扣——但备源机制应确保至少 1-2 个源有可用数据。
+
+9. **历史情绪不预测未来。** 将你的结论作为信号供交易员结合基本面和技术面综合参考。
 
 ## 输出字段
 
